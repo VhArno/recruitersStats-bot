@@ -11,8 +11,8 @@ const path = require("path");
 // The exact name of the WhatsApp group to monitor
 const GROUP_NAME = "recruitment-testgroup";
 
-// Schedule: send summary every 2 hours between 9:00 and 20:00, every day
-const SCHEDULE = "0 9,11,13,15,17,19 * * *";
+// Schedule: send summary every 30 minutes between 10:00 and 21:00, every day
+const SCHEDULE = "*/30 10-21 * * *";
 
 // Timezone for the schedule
 const TIMEZONE = "Europe/Amsterdam";
@@ -29,7 +29,7 @@ const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️�
 
 // Load recruiters.json — reloaded on every summary so changes take effect without restart
 function loadRecruiters() {
-  const filePath = path.join(__dirname, "recruiters.json");
+  const filePath = path.join(__dirname, "data/recruiters.json");
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const data = JSON.parse(raw);
@@ -58,7 +58,7 @@ function loadRecruiters() {
 
 // Automatically saves a discovered LID back into recruiters.json
 function saveLidToJson(lid, name) {
-  const filePath = path.join(__dirname, "recruiters.json");
+  const filePath = path.join(__dirname, "data/recruiters.json");
   try {
     const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
     for (const teamData of Object.values(data.teams)) {
@@ -82,7 +82,19 @@ const recruiterTotals = {};
 
 const client = new Client({
   authStrategy: new LocalAuth(),
-  puppeteer: { args: ["--no-sandbox"] },
+  puppeteer: {
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--single-process",
+      "--disable-gpu"
+    ],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+  },
 });
 
 // Show QR code to link the WhatsApp number
@@ -93,7 +105,7 @@ client.on("qr", (qr) => {
 
 client.on("ready", () => {
   const { lookup } = loadRecruiters();
-  console.log("✅ Bot is ready and listening!");
+  console.log(`✅ Bot is ready and listening in group ${GROUP_NAME}!`);
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
 });
@@ -173,15 +185,19 @@ async function sendSummary() {
 
   // Loop through teams in order from recruiters.json
   for (const [teamName, teamData] of Object.entries(teams)) {
-    const members = teamData.members.map((m) => m.phone);
-
-    // Get scores for this team's members
-    const scores = members
-      .filter((phone) => recruiterTotals[phone])
-      .map((phone) => ({
-        name: recruiterTotals[phone].name,
-        score: recruiterTotals[phone].score,
-      }))
+    // Get scores for this team's members — check phone, lid, and name as keys
+    const scores = teamData.members
+      .map((m) => {
+        // Find this member's entry in recruiterTotals by any of their known IDs
+        const entry =
+          (m.phone && recruiterTotals[m.phone]) ||
+          (m.lid   && recruiterTotals[m.lid])   ||
+          recruiterTotals[Object.keys(recruiterTotals).find(
+            (k) => recruiterTotals[k].name.toLowerCase() === m.name.toLowerCase()
+          )];
+        return entry ? { name: entry.name, score: entry.score } : null;
+      })
+      .filter(Boolean)
       .sort((a, b) => b.score - a.score);
 
     if (scores.length === 0) continue;
