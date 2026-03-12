@@ -9,7 +9,7 @@ const path = require("path");
 // ─────────────────────────────────────────────
 
 // The exact name of the WhatsApp group to monitor
-const GROUP_NAME = "recruitment-testgroup";
+const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆";
 
 // Schedule: send summary every 30 minutes between 10:00 and 21:00, every day
 const SCHEDULE = "*/30 10-21 * * *";
