@@ -111,7 +111,7 @@ client.on("message", async (msg) => {
   const text = msg.body.trim();
 
   // Match patterns like: +1/10 | +3/15 | +1 / 10 | +2/8
-  const match = text.match(/^\+\s*(\d+)\s*\/\s*(\d+)$/);
+  const match = text.match(/^\+\s*(\d+)\s*\/\s*(\d+)/);
   if (!match) return;
 
   const added = parseInt(match[1]);
