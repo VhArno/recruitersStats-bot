@@ -91,11 +91,57 @@ client.on("qr", (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
-client.on("ready", () => {
+client.on("ready", async () => {
   const { lookup } = loadRecruiters();
-  console.log(`✅ Bot is ready and listening in group ${GROUP_NAME}!`);
+  console.log("✅ Bot is ready and listening!");
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
+
+  // Catch up on any messages missed while the bot was offline (e.g. laptop sleep)
+  console.log("🔍 Scanning today's missed messages...");
+  try {
+    const chats = await client.getChats();
+    const group = chats.find((c) => c.name === GROUP_NAME);
+    if (!group) return;
+
+    const messages = await group.fetchMessages({ limit: 100 });
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    let caught = 0;
+    for (const msg of messages) {
+      const msgDate = new Date(msg.timestamp * 1000);
+      if (msgDate < todayStart) continue;
+
+      const text = msg.body.trim();
+      const match = text.match(/^\+?\s*(\d+)\s*\/\s*(\d+)/);
+      if (!match) continue;
+
+      const rawId = (msg.author || msg.from).replace(/@c\.us|@lid/g, "");
+      const total = parseInt(match[2]);
+
+      const contact = await msg.getContact();
+      const displayName = contact.pushname || contact.name || rawId;
+
+      const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
+      const recruiter =
+        lookup[rawId] ||
+        lidLookup[rawId] ||
+        nameLookup[displayName.toLowerCase()] ||
+        displayLookup[displayName.toLowerCase()];
+
+      if (recruiter) {
+        const prevScore = recruiterTotals[rawId]?.score ?? 0;
+        const newScore = Math.max(prevScore, total);
+        recruiterTotals[rawId] = { name: recruiter.name, team: recruiter.team, score: newScore };
+        caught++;
+      }
+    }
+    console.log(`✅ Caught up on ${caught} missed message(s) from today.`);
+  } catch (err) {
+    console.error("❌ Error scanning missed messages:", err.message);
+  }
 });
 
 // Listen for messages in the group
@@ -144,7 +190,7 @@ client.on("message", async (msg) => {
   }
 
   // React with a checkmark to confirm the message was logged
-  await msg.react("✅");
+  // await msg.react("✅");
 });
 
 // Build and send the summary message
