@@ -106,12 +106,13 @@ client.on("ready", async () => {
 
     const messages = await group.fetchMessages({ limit: 100 });
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
     let caught = 0;
     for (const msg of messages) {
       const msgDate = new Date(msg.timestamp * 1000);
+
       if (msgDate < todayStart) continue;
 
       const text = msg.body.trim();
@@ -138,6 +139,7 @@ client.on("ready", async () => {
         caught++;
       }
     }
+
     console.log(`✅ Caught up on ${caught} missed message(s) from today.`);
   } catch (err) {
     console.error("❌ Error scanning missed messages:", err.message);
