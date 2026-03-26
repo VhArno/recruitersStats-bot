@@ -39,12 +39,6 @@
           "displayName": "W"
         },
         {
-          "phone": "31611265043",
-          "name": "Olivia",
-          "lid": null,
-          "displayName": "Olivia"
-        },
-        {
           "phone": "31610755675",
           "name": "Meike",
           "lid": null,
@@ -55,6 +49,18 @@
           "name": "Lia",
           "lid": null,
           "displayName": "31640111250"
+        },
+        {
+          "phone": "31617020631",
+          "name": "Kenzo",
+          "lid": null,
+          "displayName": "Kenzo"
+        },
+        {
+          "phone": "31648198020",
+          "name": "Samir",
+          "displayName": "Samir",
+          "lid": null
         }
       ]
     },
@@ -85,12 +91,6 @@
           "displayName": "Kelvin Bosch"
         },
         {
-          "phone": "31617020631",
-          "name": "Kenzo",
-          "lid": null,
-          "displayName": "Kenzo"
-        },
-        {
           "phone": "31613817704",
           "name": "Maridel",
           "lid": null,
@@ -109,10 +109,10 @@
           "displayName": "Roos"
         },
         {
-          "phone": "31648198020",
-          "name": "Samir",
-          "displayName": "Samir",
-          "lid": null
+          "phone": "31611265043",
+          "name": "Olivia",
+          "lid": null,
+          "displayName": "Olivia"
         }
       ]
     },

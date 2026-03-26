@@ -106,14 +106,13 @@ client.on("ready", async () => {
 
     const messages = await group.fetchMessages({ limit: 100 });
 
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayStart = new Date();
 
     let caught = 0;
     for (const msg of messages) {
       const msgDate = new Date(msg.timestamp * 1000);
 
-      if (msgDate < todayStart) continue;
+      if (msgDate.getDate() !== todayStart.getDate()) continue;
 
       const text = msg.body.trim();
       const match = text.match(/^\+?\s*(\d+)\s*\/\s*(\d+)/);
