@@ -173,6 +173,7 @@ client.on("ready", async () => {
     }
 
     console.log(`✅ Caught up on ${caught} missed message(s) from today.`);
+    console.log("📋 Current totals:", recruiterTotals);
   } catch (err) {
     console.error("❌ Kritieke fout bij scannen:", err.message);
   }
