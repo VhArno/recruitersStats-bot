@@ -9,7 +9,7 @@ const path = require("path");
 // ─────────────────────────────────────────────
 
 // The exact name of the WhatsApp group to monitor
-const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆";
+const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆"; //🏆RM EU 275/1500 WEEKGOAL🏆
 
 // Schedule: send summary every 30 minutes between 10:00 and 21:00, every day
 const SCHEDULE = "*/30 10-21 * * *";
@@ -103,101 +103,163 @@ client.on("ready", async () => {
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
 
-  // Catch up on any messages missed while the bot was offline (e.g. laptop sleep)
-  console.log("🔍 Scanning today's missed messages...");
+  console.log("🔍 Scanning today's missed messages (including third-party updates)...");
   try {
     const chats = await client.getChats();
     const group = chats.find((c) => c.name === GROUP_NAME);
     if (!group) return;
 
     const messages = await group.fetchMessages({ limit: 100 });
-
     const todayStart = new Date();
-
     let caught = 0;
+
     for (const msg of messages) {
-      const msgDate = new Date(msg.timestamp * 1000);
+      try { // Extra try-catch BINNEN de loop, zodat 1 fout niet alles stopt
+          const msgDate = new Date(msg.timestamp * 1000);
+          if (msgDate.getDate() !== todayStart.getDate()) continue;
 
-      if (msgDate.getDate() !== todayStart.getDate()) continue;
+          const text = msg.body.trim().toLowerCase();
+          
+          // De regex: (naam optioneel):(score)
+          const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
+          if (!match) continue;
 
-      const text = msg.body.trim();
-      const match = text.match(/^\+?\s*(\d+)\s*\/\s*(\d+)/);
-      if (!match) continue;
+          const mentionedName = match[1]?.trim();
+          const total = parseInt(match[3]);
 
-      const rawId = (msg.author || msg.from).replace(/@c\.us|@lid/g, "");
-      const total = parseInt(match[2]);
+          let targetRecruiter = null;
+          let targetId = null;
 
-      const contact = await msg.getContact();
-      const displayName = contact.pushname || contact.name || rawId;
+          const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
 
-      const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
-      const recruiter =
-        lookup[rawId] ||
-        lidLookup[rawId] ||
-        nameLookup[displayName.toLowerCase()] ||
-        displayLookup[displayName.toLowerCase()];
+          if (mentionedName) {
+              // SCENARIO 1: "josi: +6/16"
+              targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
+              // Gebruik het ID uit de JSON, of de naam als fallback (nooit undefined laten!)
+              targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
+          } else {
+              // SCENARIO 2: Eigen score "+6/16"
+              const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+              if (!rawId) continue;
 
-      if (recruiter) {
-        const prevScore = recruiterTotals[rawId]?.score ?? 0;
-        const newScore = Math.max(prevScore, total);
-        recruiterTotals[rawId] = { name: recruiter.name, team: recruiter.team, score: newScore };
-        caught++;
+              targetRecruiter = lookup[rawId] || lidLookup[rawId];
+
+              // Alleen als we hem nog niet hebben op ID, checken we de contactnaam
+              if (!targetRecruiter) {
+                  const contact = await msg.getContact();
+                  if (contact && (contact.pushname || contact.name)) {
+                      const displayName = (contact.pushname || contact.name).toLowerCase();
+                      targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
+                  }
+              }
+              targetId = rawId;
+          }
+
+          if (targetRecruiter && targetId) {
+              const prevScore = recruiterTotals[targetId]?.score ?? 0;
+              const newScore = Math.max(prevScore, total);
+              
+              recruiterTotals[targetId] = { 
+                  name: targetRecruiter.name, 
+                  team: targetRecruiter.team, 
+                  score: newScore 
+              };
+              caught++;
+          }
+      } catch (innerErr) {
+          console.error("⚠️ Slaan een bericht over wegens fout:", innerErr.message);
+          // We gaan gewoon door naar het volgende bericht in de loop
       }
     }
 
     console.log(`✅ Caught up on ${caught} missed message(s) from today.`);
   } catch (err) {
-    console.error("❌ Error scanning missed messages:", err.message);
+    console.error("❌ Kritieke fout bij scannen:", err.message);
   }
 });
 
 // Listen for messages in the group
 client.on("message", async (msg) => {
-  // Only process group messages
+  // 1. Basic checks
   if (!msg.from.endsWith("@g.us")) return;
+  
+  try {
+    const chat = await msg.getChat();
+    if (chat.name !== GROUP_NAME) return;
 
-  // Check it's the right group
-  const chat = await msg.getChat();
-  if (chat.name !== GROUP_NAME) return;
+    const text = msg.body.trim().toLowerCase();
+    
+    // Regex: (naam optioneel):(score) -> josi: +6/16 of +6/16
+    const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
+    if (!match) return;
 
-  const rawId = (msg.author || msg.from).replace(/@c\.us|@lid/g, "");
-  const text = msg.body.trim();
+    // Belangrijk: match[1] is de naam, match[2] is de '+6', match[3] is de '16'
+    const mentionedName = match[1]?.trim();
+    const added = parseInt(match[2]);
+    const total = parseInt(match[3]);
 
-  // Match patterns like: +1/10 | +3/15 | +1 / 10 | +2/8
-  const match = text.match(/^\+?\s*(\d+)\s*\/\s*(\d+)/);
-  if (!match) return;
+    let targetRecruiter = null;
+    let targetId = null;
+    let isThirdParty = false;
 
-  const added = parseInt(match[1]);
-  const total = parseInt(match[2]);
+    const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
 
-  // Get contact display name
-  const contact = await msg.getContact();
-  const displayName = contact.pushname || contact.name || rawId;
+    if (mentionedName) {
+      // SCENARIO 1: Iemand voert score in voor een ander ("josi: +6/16")
+      targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
+      targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
+      isThirdParty = true;
+    } else {
+      // SCENARIO 2: Eigen score ("+6/16")
+      const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+      if (!rawId) return;
 
-  // Look up recruiter — try phone, LID, name, displayName in order
-  const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
-  const recruiter =
-    lookup[rawId] ||
-    lidLookup[rawId] ||
-    nameLookup[displayName.toLowerCase()] ||
-    displayLookup[displayName.toLowerCase()];
+      targetRecruiter = lookup[rawId] || lidLookup[rawId];
 
-  if (recruiter) {
-    recruiterTotals[rawId] = { name: recruiter.name, team: recruiter.team, score: total };
-    console.log(`📌 ${recruiter.name} (${rawId}) [${recruiter.team}] planned +${added} | total: ${total}`);
-
-    // If this is a LID we haven't stored yet, save it back into recruiters.json
-    if (rawId.length > 15 && !lookup[rawId] && !lidLookup[rawId]) {
-      saveLidToJson(rawId, recruiter.name);
+      // Fallback op displaynaam als ID niet in de lijst staat
+      if (!targetRecruiter) {
+        const contact = await msg.getContact();
+        const displayName = (contact.pushname || contact.name || "").toLowerCase();
+        targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
+      }
+      targetId = rawId;
     }
-  } else {
-    // Still track unknown people, just without a team
-    recruiterTotals[rawId] = { name: displayName, team: null, score: total };
-    console.log(`⚠️  Unknown: ${rawId} (${displayName}) — add to recruiters.json to assign a team.`);
-  }
 
-  // React with a checkmark to confirm the message was logged
-  // await msg.react("✅");
+    if (targetRecruiter && targetId) {
+      // Update de scores in het geheugen
+      const prevScore = recruiterTotals[targetId]?.score ?? 0;
+      const newScore = Math.max(prevScore, total);
+
+      recruiterTotals[targetId] = { 
+        name: targetRecruiter.name, 
+        team: targetRecruiter.team, 
+        score: newScore 
+      };
+
+      const logPrefix = isThirdParty ? `👤 (Via derde) ${targetRecruiter.name}` : `📌 ${targetRecruiter.name}`;
+      console.log(`${logPrefix} [${targetRecruiter.team}] +${added} | totaal nu: ${newScore}`);
+
+      // Automatisch LID opslaan als het een eigen score is en nog niet bekend
+      if (!isThirdParty && targetId.length > 15 && !lookup[targetId] && !lidLookup[targetId]) {
+        saveLidToJson(targetId, targetRecruiter.name);
+      }
+      
+      // Optioneel: vinkje geven
+      // await msg.react("✅");
+
+    } else if (!isThirdParty) {
+      // Alleen onbekenden loggen als ze hun eigen score sturen (voorkomt spam bij typfouten in namen)
+      const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+      const contact = await msg.getContact();
+      const displayName = contact.pushname || contact.name || rawId;
+      
+      recruiterTotals[rawId] = { name: displayName, team: null, score: total };
+      console.log(`⚠️ Onbekend: ${rawId} (${displayName}) stuurde score ${total}`);
+    }
+
+  } catch (err) {
+    console.error("❌ Fout bij verwerken live bericht:", err.message);
+  }
 });
 
 // Build and send the summary message
