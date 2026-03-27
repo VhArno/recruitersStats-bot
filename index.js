@@ -75,7 +75,7 @@ function saveLidToJson(lid, name) {
   } catch (err) {
     console.error("❌ Could not save LID to recruiters.json:", err.message);
   }
-}a
+}
 
 // Stores the latest reported total per phone: { "31612345678": { name, team, score } }
 const recruiterTotals = {};
