@@ -82,8 +82,8 @@ const recruiterTotals = {};
 
 const client = new Client({
   authStrategy: new LocalAuth({
-    clientId: "bot-1",
-    dataPath: "./sessions"
+    clientId: "recruitment-bot",
+    dataPath: "./sessions-recruitment"
   }),
   puppeteer: { 
     executablePath: '/usr/bin/chromium-browser', 
