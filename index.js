@@ -75,7 +75,7 @@ function saveLidToJson(lid, name) {
   } catch (err) {
     console.error("❌ Could not save LID to recruiters.json:", err.message);
   }
-}
+}a
 
 // Stores the latest reported total per phone: { "31612345678": { name, team, score } }
 const recruiterTotals = {};
@@ -289,8 +289,11 @@ async function sendSummary() {
 cron.schedule(
   SCHEDULE,
   () => {
-    console.log("⏰ Scheduled summary triggered...");
-    sendSummary();
+    const randomDelay = Math.floor(Math.random() * 60000);
+    setTimeout(() => {
+      console.log("⏰ Scheduled summary triggered...");
+      sendSummary();
+    }, randomDelay);
   },
   { timezone: TIMEZONE }
 );
