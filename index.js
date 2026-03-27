@@ -81,8 +81,14 @@ function saveLidToJson(lid, name) {
 const recruiterTotals = {};
 
 const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: { args: ["--no-sandbox"] },
+  authStrategy: new LocalAuth({
+    clientId: "bot-1",
+    dataPath: "./sessions"
+  }),
+  puppeteer: { 
+    executablePath: '/usr/bin/chromium-browser', 
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  },
 });
 
 // Show QR code to link the WhatsApp number
