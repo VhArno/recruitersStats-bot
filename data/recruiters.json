@@ -51,12 +51,6 @@
           "displayName": "31640111250"
         },
         {
-          "phone": "31617020631",
-          "name": "Kenzo",
-          "lid": null,
-          "displayName": "Kenzo"
-        },
-        {
           "phone": "31648198020",
           "name": "Samir",
           "displayName": "Samir",
@@ -113,6 +107,12 @@
           "name": "Olivia",
           "lid": null,
           "displayName": "Olivia"
+        },
+        {
+          "phone": "31617020631",
+          "name": "Kenzo",
+          "lid": null,
+          "displayName": "Kenzo"
         }
       ]
     },
