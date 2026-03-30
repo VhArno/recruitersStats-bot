@@ -263,6 +263,8 @@ client.on("message", async (msg) => {
   }
 });
 
+let oldGrandTotal = 0;
+
 // Build and send the summary message
 async function sendSummary() {
   const chats = await client.getChats();
@@ -336,6 +338,13 @@ async function sendSummary() {
     grandTotal += unassigned.reduce((sum, r) => sum + r.score, 0);
     grandCount += unassigned.length;
     lines.push("");
+  }
+
+  if (grandTotal === oldGrandTotal) {
+    console.log('No new updates since last summary, skipping message send.');
+    return;
+  } else {
+    oldGrandTotal = grandTotal;
   }
 
   const grandAvg = grandCount > 0 ? Math.round(grandTotal / grandCount) : 0;
