@@ -326,7 +326,7 @@ async function sendSummary() {
     lines.push(`• AVG: ${teamAvg}`);
     lines.push("");
 
-    if (fullRecruiterLength > 0) {
+    if ((scores.length - fullRecruiterLength) > 0) {
       // Bijspring recruiters
       lines.push("Bijspring:");
       scores.filter(r => r.bijspring).forEach(({ name, score }) => {

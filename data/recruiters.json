@@ -59,13 +59,6 @@
           "bijspring": false
         },
         {
-          "phone": "31648198020",
-          "name": "Samir",
-          "displayName": "Samir",
-          "lid": null,
-          "bijspring": false
-        },
-        {
           "phone": "31630552146",
           "name": "Hidde",
           "displayName": "Hidde",
@@ -137,6 +130,13 @@
           "name": "Kenzo",
           "lid": null,
           "displayName": "Kenzo",
+          "bijspring": false
+        },
+        {
+          "phone": "31648198020",
+          "name": "Samir",
+          "displayName": "Samir",
+          "lid": null,
           "bijspring": false
         }
       ]
