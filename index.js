@@ -308,7 +308,7 @@ async function sendSummary() {
 
     if (scores.length === 0) continue;
 
-    const fullRecruiterLength = scores.reduce((count, r) => !r.bijspring ? count + 1 : count, 0);
+    const fullRecruiterLength = scores.map(r => r.bijspring).filter(b => !b).length; // Alleen de niet-bijspring recruiters tellen mee voor de gemiddelde score
 
     const teamTotal = scores.reduce((sum, r) => r.bijspring ? sum : sum + r.score, 0);
     const teamAvg = Math.round(teamTotal / fullRecruiterLength);
