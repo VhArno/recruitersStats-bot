@@ -301,27 +301,40 @@ async function sendSummary() {
           recruiterTotals[Object.keys(recruiterTotals).find(
             (k) => recruiterTotals[k].name.toLowerCase() === m.name.toLowerCase()
           )];
-        return entry ? { name: entry.name, score: entry.score } : null;
+        return entry ? { name: entry.name, score: entry.score, bijspring: m.bijspring } : null;
       })
       .filter(Boolean)
       .sort((a, b) => b.score - a.score);
 
     if (scores.length === 0) continue;
 
-    const teamTotal = scores.reduce((sum, r) => sum + r.score, 0);
-    const teamAvg = Math.round(teamTotal / scores.length);
+    const fullRecruiterLength = scores.reduce((count, r) => !r.bijspring ? count + 1 : count, 0);
 
-    grandTotal += teamTotal;
-    grandCount += scores.length;
+    const teamTotal = scores.reduce((sum, r) => !r.bijspring && sum + r.score, 0);
+    const teamAvg = Math.round(teamTotal / fullRecruiterLength);
+    const teamGrandTotal = scores.reduce((sum, r) => sum + r.score, 0);
+
+    grandTotal += teamGrandTotal;
+    grandCount += fullRecruiterLength;
 
     lines.push(`*${teamName}*`);
-    scores.forEach(({ name, score }, i) => {
+    scores.filter(r => !r.bijspring).forEach(({ name, score }, i) => {
       const medal = MEDALS[i] || `${i + 1}.`;
       lines.push(`${medal} ${name} - ${score}`);
     });
     lines.push(`• Total: ${teamTotal}`);
     lines.push(`• AVG: ${teamAvg}`);
     lines.push("");
+
+    // Bijspring recruiters
+    lines.push("Bijspring:");
+    scores.filter(r => r.bijspring).forEach(({ name, score }) => {
+      lines.push(`🔹 ${name} - ${score}`);
+    });
+
+    // Total
+    lines.push("");
+    lines.push("Total planned:", teamGrandTotal);
   }
 
   // Add anyone not assigned to a team at the bottom

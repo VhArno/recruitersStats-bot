@@ -6,61 +6,71 @@
           "phone": "31621312396",
           "name": "Pieter",
           "displayName": "Pieter",
-          "lid": null
+          "lid": null,
+          "bijspring": true
         },
         {
           "phone": "31629888194",
           "name": "Jakob",
           "displayName": "Jakob",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "352661996619",
           "name": "Gabriel",
           "displayName": "Gabriel Carazzai",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "31611838740",
           "name": "David",
           "displayName": "David",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "31642889868",
           "name": "Delano",
           "displayName": "Delano Kyandro",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "31627288956",
           "name": "Willem",
           "lid": null,
-          "displayName": "W"
+          "displayName": "W",
+          "bijspring": false
         },
         {
           "phone": "31610755675",
           "name": "Meike",
           "lid": null,
-          "displayName": ""
+          "displayName": "",
+          "bijspring": false
         },
         {
           "phone": "31640111250",
           "name": "Lia",
           "lid": null,
-          "displayName": "31640111250"
+          "displayName": "31640111250",
+          "bijspring": false
         },
         {
           "phone": "31648198020",
           "name": "Samir",
           "displayName": "Samir",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "31630552146",
           "name": "Hidde",
           "displayName": "Hidde",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         }
       ]
     },
@@ -70,55 +80,64 @@
           "phone": "31612691173",
           "name": "Gijs",
           "lid": null,
-          "displayName": "."
+          "displayName": ".",
+          "bijspring": false
         },
         {
           "phone": "32474368005",
           "name": "Arno",
           "displayName": "Arno",
-          "lid": null
+          "lid": null,
+          "bijspring": false
         },
         {
           "phone": "31628443252",
           "name": "Jenusha",
           "lid": null,
-          "displayName": "Esha"
+          "displayName": "Esha",
+          "bijspring": false
         },
         {
           "phone": "31681240081",
           "name": "Kelvin",
           "lid": null,
-          "displayName": "Kelvin Bosch"
+          "displayName": "Kelvin Bosch",
+          "bijspring": false
         },
         {
           "phone": "31613817704",
           "name": "Maridel",
           "lid": null,
-          "displayName": "Maridel"
+          "displayName": "Maridel",
+          "bijspring": false
         },
         {
           "phone": "32485500795",
           "name": "Myra",
           "lid": null,
-          "displayName": "32485500795"
+          "displayName": "32485500795",
+          "bijspring": false
         },
         {
           "phone": "31612493999",
           "name": "Roos",
           "lid": null,
-          "displayName": "Roos"
+          "displayName": "Roos",
+          "bijspring": false
         },
         {
           "phone": "31611265043",
           "name": "Olivia",
           "lid": null,
-          "displayName": "Olivia"
+          "displayName": "Olivia",
+          "bijspring": false
         },
         {
           "phone": "31617020631",
           "name": "Kenzo",
           "lid": null,
-          "displayName": "Kenzo"
+          "displayName": "Kenzo",
+          "bijspring": false
         }
       ]
     },
@@ -128,67 +147,78 @@
           "phone": "19142187271",
           "name": "Amina",
           "lid": null,
-          "displayName": "Amina"
+          "displayName": "Amina",
+          "bijspring": false
         },
         {
           "phone": "4917645683616",
           "name": "Dominika",
           "lid": null,
-          "displayName": "Dominika"
+          "displayName": "Dominika",
+          "bijspring": false
         },
         {
           "phone": "4915222476144",
           "name": "Vanessa",
           "lid": "22944235425810",
-          "displayName": "4915222476144"
+          "displayName": "4915222476144",
+          "bijspring": false
         },
         {
           "phone": "31620389395",
           "name": "Hannah",
           "lid": null,
-          "displayName": "Hannah"
+          "displayName": "Hannah",
+          "bijspring": false
         },
         {
           "phone": "31625271894",
           "name": "Renée",
           "lid": null,
-          "displayName": "Renée"
+          "displayName": "Renée",
+          "bijspring": false
         },
         {
           "phone": "31616049713",
           "name": "Hazal",
           "lid": null,
-          "displayName": "Hazal Uzun"
+          "displayName": "Hazal Uzun",
+          "bijspring": false
         },
         {
           "phone": "9647502540808",
           "name": "Helbin",
           "lid": null,
-          "displayName": "Helbin"
+          "displayName": "Helbin",
+          "bijspring": false
         },
         {
           "phone": "4917632224082",
           "name": "Ilyes",
           "lid": "235205646413937",
-          "displayName": "🇲🇦"
+          "displayName": "🇲🇦",
+          "bijspring": false
         },
         {
           "phone": "491781794498",
           "name": "Hedra",
           "lid": null,
-          "displayName": "Hedra"
+          "displayName": "Hedra",
+          "bijspring": false
         },
         {
           "phone": "4915202838462",
           "name": "Lara",
           "lid": null,
-          "displayName": "lara"
+          "displayName": "lara",
+          "bijspring": false
         },
         {
           "phone": "4917645778000",
           "name": "Josi",
           "lid": null,
-          "displayName": "Josi"
+          "displayName": "Josi",
+          "bijspring": false
         }
       ]
     },
@@ -198,73 +228,85 @@
           "phone": "31622810234",
           "name": "Hedi",
           "lid": null,
-          "displayName": "Didi"
+          "displayName": "Didi",
+          "bijspring": false
         },
         {
           "phone": "32455133079",
           "name": "Camille",
           "lid": null,
-          "displayName": "Camille"
+          "displayName": "Camille",
+          "bijspring": false
         },
         {
           "phone": "31611531894",
           "name": "Yohann",
           "lid": null,
-          "displayName": "Yohann 😎"
+          "displayName": "Yohann 😎",
+          "bijspring": false
         },
         {
           "phone": "32471523246",
           "name": "Amelie",
           "lid": null,
-          "displayName": "Amelie"
+          "displayName": "Amelie",
+          "bijspring": false
         },
         {
           "phone": "32471540749",
           "name": "Arthur",
           "lid": null,
-          "displayName": "32471540749"
+          "displayName": "32471540749",
+          "bijspring": false
         },
         {
           "phone": "32495628130",
           "name": "Fanny",
           "lid": null,
-          "displayName": "Fanny Almer"
+          "displayName": "Fanny Almer",
+          "bijspring": false
         },
         {
           "phone": "33674526027",
           "name": "Jeanne",
           "lid": null,
-          "displayName": "Jeanne Blanc"
+          "displayName": "Jeanne Blanc",
+          "bijspring": false
         },
         {
           "phone": "32474187092",
           "name": "Keelin",
           "lid": null,
-          "displayName": "Keelin Vincent"
+          "displayName": "Keelin Vincent",
+          "bijspring": false
         },
         {
           "phone": "32493854481",
           "name": "Kenza",
           "lid": null,
-          "displayName": "Kenza"
+          "displayName": "Kenza",
+          "bijspring": false
         },
         {
           "phone": "32495561188",
           "name": "Louis",
           "lid": null,
-          "displayName": "Louis"
+          "displayName": "Louis",
+          "bijspring": false
         },
         {
           "phone": "32497751483",
           "name": "Marion",
           "lid": null,
-          "displayName": "Marion"
+          "displayName": "Marion",
+          "bijspring": false
         },
         {
           "phone": "32470129462",
           "name": "Rihana",
           "lid": null,
-          "displayName": "Ririi💗"
+          "displayName": "Ririi💗",
+          "bijspring": false
         }
       ]
     },
