@@ -310,7 +310,7 @@ async function sendSummary() {
 
     const fullRecruiterLength = scores.reduce((count, r) => !r.bijspring ? count + 1 : count, 0);
 
-    const teamTotal = scores.reduce((sum, r) => !r.bijspring && sum + r.score, 0);
+    const teamTotal = scores.reduce((sum, r) => r.bijspring ? sum : sum + r.score, 0);
     const teamAvg = Math.round(teamTotal / fullRecruiterLength);
     const teamGrandTotal = scores.reduce((sum, r) => sum + r.score, 0);
 
@@ -326,15 +326,18 @@ async function sendSummary() {
     lines.push(`• AVG: ${teamAvg}`);
     lines.push("");
 
-    // Bijspring recruiters
-    lines.push("Bijspring:");
-    scores.filter(r => r.bijspring).forEach(({ name, score }) => {
-      lines.push(`🔹 ${name} - ${score}`);
-    });
+    if (fullRecruiterLength > 0) {
+      // Bijspring recruiters
+      lines.push("Bijspring:");
+      scores.filter(r => r.bijspring).forEach(({ name, score }) => {
+        lines.push(`🔹 ${name} - ${score}`);
+      });
 
-    // Total
-    lines.push("");
-    lines.push("Total planned:", teamGrandTotal);
+      // Total
+      lines.push("");
+      lines.push(`Total planned: ${teamGrandTotal}`);
+      lines.push("");
+    }
   }
 
   // Add anyone not assigned to a team at the bottom
