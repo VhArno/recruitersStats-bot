@@ -103,6 +103,8 @@ client.on("ready", async () => {
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
 
+  await new Promise(res => setTimeout(res, 5000));
+
   console.log("🔍 Scanning today's missed messages (including third-party updates)...");
   try {
     const chats = await client.getChats();
