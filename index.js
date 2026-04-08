@@ -103,15 +103,27 @@ client.on("ready", async () => {
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
 
-  await new Promise(res => setTimeout(res, 5000));
-
   console.log("🔍 Scanning today's missed messages (including third-party updates)...");
   try {
     const chats = await client.getChats();
     const group = chats.find((c) => c.name === GROUP_NAME);
     if (!group) return;
 
-    const messages = await group.fetchMessages({ limit: 100 });
+    let messages = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        messages = await group.fetchMessages({ limit: 100 });
+        break;
+      } catch (fetchErr) {
+        console.warn(`⚠️ fetchMessages poging ${attempt} mislukt: ${fetchErr.message}`);
+        if (attempt < 3) await new Promise(res => setTimeout(res, 5000));
+      }
+    }
+    if (!messages.length) {
+      console.warn("⚠️ fetchMessages mislukt na 3 pogingen, startup scan overgeslagen.");
+      return;
+    }
+    
     const todayStart = new Date();
     let caught = 0;
 
