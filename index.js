@@ -250,7 +250,25 @@ client.on("message", async (msg) => {
     if (targetRecruiter && targetId) {
       const prevScore = recruiterTotals[targetId]?.score ?? 0;
       const newScore = Math.max(prevScore, total);
-      recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
+
+      if (targetRecruiter && targetId) {
+        const prevScore = recruiterTotals[targetId]?.score ?? 0;
+        const newScore = Math.max(prevScore, total);
+
+        // ── Dedup: verwijder eventuele andere entries voor dezelfde persoon ──
+        for (const [key, val] of Object.entries(recruiterTotals)) {
+          if (key !== targetId && val.name.toLowerCase() === targetRecruiter.name.toLowerCase()) {
+            const existingScore = val.score;
+            delete recruiterTotals[key];
+            // Neem de hoogste score mee
+            if (existingScore > newScore) newScore = existingScore;
+            console.log(`🔀 Merged duplicate entry for ${targetRecruiter.name} (${key} → ${targetId})`);
+          }
+        }
+
+        recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
+        saveTotals();
+      }
 
       const logPrefix = isThirdParty ? `👤 (Via derde) ${targetRecruiter.name}` : `📌 ${targetRecruiter.name}`;
       console.log(`${logPrefix} [${targetRecruiter.team}] +${added} | totaal nu: ${newScore}`);
