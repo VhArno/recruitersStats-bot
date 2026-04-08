@@ -8,44 +8,70 @@ const path = require("path");
 // CONFIGURATION — edit these values
 // ─────────────────────────────────────────────
 
-// The exact name of the WhatsApp group to monitor
-const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆"; //🏆RM EU 275/1500 WEEKGOAL🏆
-
-// Schedule: send summary every 30 minutes between 10:00 and 21:00, every day
+const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆";
 const SCHEDULE = "*/30 10-21 * * *";
-
-// Timezone for the schedule
 const TIMEZONE = "Europe/Amsterdam";
-
-// Daily total target (shown in the grand total line)
 const DAILY_TARGET = 250;
 
 // ─────────────────────────────────────────────
-// BOT LOGIC — no need to edit below this line
+// PERSISTENCE
 // ─────────────────────────────────────────────
 
-// Medal emojis for ranking positions
+const TOTALS_FILE = path.join(__dirname, "data/recruiterTotals.json");
+
+function loadTotals() {
+  try {
+    if (!fs.existsSync(TOTALS_FILE)) return {};
+    const data = JSON.parse(fs.readFileSync(TOTALS_FILE, "utf8"));
+    // Only restore if saved today
+    const savedDate = data._date;
+    const today = new Date().toDateString();
+    if (savedDate !== today) {
+      console.log("📅 Saved totals are from a previous day, starting fresh.");
+      return {};
+    }
+    delete data._date;
+    console.log(`💾 Restored ${Object.keys(data).length} scores from disk.`);
+    return data;
+  } catch (err) {
+    console.error("❌ Could not load recruiterTotals.json:", err.message);
+    return {};
+  }
+}
+
+function saveTotals() {
+  try {
+    const data = { ...recruiterTotals, _date: new Date().toDateString() };
+    fs.mkdirSync(path.dirname(TOTALS_FILE), { recursive: true });
+    fs.writeFileSync(TOTALS_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("❌ Could not save recruiterTotals.json:", err.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// BOT LOGIC
+// ─────────────────────────────────────────────
+
 const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 
-// Load recruiters.json — reloaded on every summary so changes take effect without restart
 function loadRecruiters() {
   const filePath = path.join(__dirname, "data/recruiters.json");
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const data = JSON.parse(raw);
 
-    // Build lookup maps for phone, lid, name and displayName
-    const lookup = {};       // phone      → recruiter
-    const lidLookup = {};    // lid        → recruiter
-    const nameLookup = {};   // name       → recruiter (fallback)
-    const displayLookup = {}; // displayName → recruiter (fallback)
+    const lookup = {};
+    const lidLookup = {};
+    const nameLookup = {};
+    const displayLookup = {};
 
     for (const [teamName, teamData] of Object.entries(data.teams)) {
       for (const member of teamData.members) {
         const entry = { name: member.name, team: teamName };
-        if (member.phone)       lookup[member.phone]                       = entry;
-        if (member.lid)         lidLookup[member.lid]                      = entry;
-        if (member.name)        nameLookup[member.name.toLowerCase()]      = entry;
+        if (member.phone)       lookup[member.phone]                            = entry;
+        if (member.lid)         lidLookup[member.lid]                           = entry;
+        if (member.name)        nameLookup[member.name.toLowerCase()]           = entry;
         if (member.displayName) displayLookup[member.displayName.toLowerCase()] = entry;
       }
     }
@@ -56,7 +82,6 @@ function loadRecruiters() {
   }
 }
 
-// Automatically saves a discovered LID back into recruiters.json
 function saveLidToJson(lid, name) {
   const filePath = path.join(__dirname, "data/recruiters.json");
   try {
@@ -77,21 +102,20 @@ function saveLidToJson(lid, name) {
   }
 }
 
-// Stores the latest reported total per phone: { "31612345678": { name, team, score } }
-const recruiterTotals = {};
+// Load persisted totals on startup
+const recruiterTotals = loadTotals();
 
 const client = new Client({
   authStrategy: new LocalAuth({
     clientId: "recruitment-bot",
     dataPath: "./sessions-recruitment"
   }),
-  puppeteer: { 
-    executablePath: '/usr/bin/chromium-browser', 
+  puppeteer: {
+    executablePath: '/usr/bin/chromium-browser',
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   },
 });
 
-// Show QR code to link the WhatsApp number
 client.on("qr", (qr) => {
   console.log("📱 Scan this QR code with your spare WhatsApp number:\n");
   qrcode.generate(qr, { small: true });
@@ -102,12 +126,18 @@ client.on("ready", async () => {
   console.log("✅ Bot is ready and listening!");
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
+  console.log(`📊 Restored ${Object.keys(recruiterTotals).length} scores from previous session.`);
 
-  console.log("🔍 Scanning today's missed messages (including third-party updates)...");
+  // Still attempt startup scan to catch any messages missed while bot was offline
+  // but don't crash if it fails — persisted scores are already loaded
+  console.log("🔍 Attempting startup scan for any missed messages...");
   try {
     const chats = await client.getChats();
     const group = chats.find((c) => c.name === GROUP_NAME);
-    if (!group) return;
+    if (!group) {
+      console.warn("⚠️ Group not found, skipping startup scan.");
+      return;
+    }
 
     let messages = [];
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -115,100 +145,82 @@ client.on("ready", async () => {
         messages = await group.fetchMessages({ limit: 100 });
         break;
       } catch (fetchErr) {
-        console.warn(`⚠️ fetchMessages poging ${attempt} mislukt: ${fetchErr.message}`);
+        console.warn(`⚠️ fetchMessages attempt ${attempt} failed: ${fetchErr.message}`);
         if (attempt < 3) await new Promise(res => setTimeout(res, 5000));
       }
     }
+
     if (!messages.length) {
-      console.warn("⚠️ fetchMessages mislukt na 3 pogingen, startup scan overgeslagen.");
+      console.warn("⚠️ Startup scan skipped — persisted scores are still loaded.");
       return;
     }
-    
+
     const todayStart = new Date();
     let caught = 0;
 
     for (const msg of messages) {
-      try { // Extra try-catch BINNEN de loop, zodat 1 fout niet alles stopt
-          const msgDate = new Date(msg.timestamp * 1000);
-          if (msgDate.getDate() !== todayStart.getDate()) continue;
+      try {
+        const msgDate = new Date(msg.timestamp * 1000);
+        if (msgDate.getDate() !== todayStart.getDate()) continue;
 
-          const text = msg.body.trim().toLowerCase();
-          
-          // De regex: (naam optioneel):(score)
-          const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
-          if (!match) continue;
+        const text = msg.body.trim().toLowerCase();
+        const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
+        if (!match) continue;
 
-          const mentionedName = match[1]?.trim();
-          const total = parseInt(match[3]);
+        const mentionedName = match[1]?.trim();
+        const total = parseInt(match[3]);
+        let targetRecruiter = null;
+        let targetId = null;
 
-          let targetRecruiter = null;
-          let targetId = null;
+        const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
 
-          const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
-
-          if (mentionedName) {
-              // SCENARIO 1: "josi: +6/16"
-              targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
-              // Gebruik het ID uit de JSON, of de naam als fallback (nooit undefined laten!)
-              targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
-          } else {
-              // SCENARIO 2: Eigen score "+6/16"
-              const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
-              if (!rawId) continue;
-
-              targetRecruiter = lookup[rawId] || lidLookup[rawId];
-
-              // Alleen als we hem nog niet hebben op ID, checken we de contactnaam
-              if (!targetRecruiter) {
-                  const contact = await msg.getContact();
-                  if (contact && (contact.pushname || contact.name)) {
-                      const displayName = (contact.pushname || contact.name).toLowerCase();
-                      targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
-                  }
-              }
-              targetId = rawId;
+        if (mentionedName) {
+          targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
+          targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
+        } else {
+          const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+          if (!rawId) continue;
+          targetRecruiter = lookup[rawId] || lidLookup[rawId];
+          if (!targetRecruiter) {
+            const contact = await msg.getContact();
+            if (contact && (contact.pushname || contact.name)) {
+              const displayName = (contact.pushname || contact.name).toLowerCase();
+              targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
+            }
           }
+          targetId = rawId;
+        }
 
-          if (targetRecruiter && targetId) {
-              const prevScore = recruiterTotals[targetId]?.score ?? 0;
-              const newScore = Math.max(prevScore, total);
-              
-              recruiterTotals[targetId] = { 
-                  name: targetRecruiter.name, 
-                  team: targetRecruiter.team, 
-                  score: newScore 
-              };
-              caught++;
-          }
+        if (targetRecruiter && targetId) {
+          const prevScore = recruiterTotals[targetId]?.score ?? 0;
+          const newScore = Math.max(prevScore, total);
+          recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
+          caught++;
+        }
       } catch (innerErr) {
-          console.error("⚠️ Slaan een bericht over wegens fout:", innerErr.message);
-          // We gaan gewoon door naar het volgende bericht in de loop
+        console.error("⚠️ Skipping message due to error:", innerErr.message);
       }
     }
 
-    console.log(`✅ Caught up on ${caught} missed message(s) from today.`);
-    console.log("📋 Current totals:", recruiterTotals);
+    saveTotals();
+    console.log(`✅ Startup scan complete — caught ${caught} missed message(s).`);
   } catch (err) {
-    console.error("❌ Kritieke fout bij scannen:", err.message);
+    console.error("❌ Startup scan failed:", err.message);
+    console.log("📊 Running on persisted scores from disk.");
   }
 });
 
-// Listen for messages in the group
 client.on("message", async (msg) => {
-  // 1. Basic checks
   if (!msg.from.endsWith("@g.us")) return;
-  
+
   try {
     const chat = await msg.getChat();
     if (chat.name !== GROUP_NAME) return;
 
     const text = msg.body.trim().toLowerCase();
-    
-    // Regex: (naam optioneel):(score) -> josi: +6/16 of +6/16
     const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
     if (!match) return;
 
-    // Belangrijk: match[1] is de naam, match[2] is de '+6', match[3] is de '16'
     const mentionedName = match[1]?.trim();
     const added = parseInt(match[2]);
     const total = parseInt(match[3]);
@@ -220,18 +232,13 @@ client.on("message", async (msg) => {
     const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
 
     if (mentionedName) {
-      // SCENARIO 1: Iemand voert score in voor een ander ("josi: +6/16")
       targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
       targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
       isThirdParty = true;
     } else {
-      // SCENARIO 2: Eigen score ("+6/16")
       const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
       if (!rawId) return;
-
       targetRecruiter = lookup[rawId] || lidLookup[rawId];
-
-      // Fallback op displaynaam als ID niet in de lijst staat
       if (!targetRecruiter) {
         const contact = await msg.getContact();
         const displayName = (contact.pushname || contact.name || "").toLowerCase();
@@ -241,35 +248,27 @@ client.on("message", async (msg) => {
     }
 
     if (targetRecruiter && targetId) {
-      // Update de scores in het geheugen
       const prevScore = recruiterTotals[targetId]?.score ?? 0;
       const newScore = Math.max(prevScore, total);
-
-      recruiterTotals[targetId] = { 
-        name: targetRecruiter.name, 
-        team: targetRecruiter.team, 
-        score: newScore 
-      };
+      recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
 
       const logPrefix = isThirdParty ? `👤 (Via derde) ${targetRecruiter.name}` : `📌 ${targetRecruiter.name}`;
       console.log(`${logPrefix} [${targetRecruiter.team}] +${added} | totaal nu: ${newScore}`);
 
-      // Automatisch LID opslaan als het een eigen score is en nog niet bekend
       if (!isThirdParty && targetId.length > 15 && !lookup[targetId] && !lidLookup[targetId]) {
         saveLidToJson(targetId, targetRecruiter.name);
       }
-      
-      // Optioneel: vinkje geven
-      // await msg.react("✅");
+
+      // Save to disk on every score update
+      saveTotals();
 
     } else if (!isThirdParty) {
-      // Alleen onbekenden loggen als ze hun eigen score sturen (voorkomt spam bij typfouten in namen)
       const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
       const contact = await msg.getContact();
       const displayName = contact.pushname || contact.name || rawId;
-      
       recruiterTotals[rawId] = { name: displayName, team: null, score: total };
       console.log(`⚠️ Onbekend: ${rawId} (${displayName}) stuurde score ${total}`);
+      saveTotals();
     }
 
   } catch (err) {
@@ -279,7 +278,6 @@ client.on("message", async (msg) => {
 
 let oldGrandTotal = 0;
 
-// Build and send the summary message
 async function sendSummary() {
   const chats = await client.getChats();
   const group = chats.find((c) => c.name === GROUP_NAME);
@@ -303,12 +301,9 @@ async function sendSummary() {
   let grandTotal = 0;
   let grandCount = 0;
 
-  // Loop through teams in order from recruiters.json
   for (const [teamName, teamData] of Object.entries(teams)) {
-    // Get scores for this team's members — check phone, lid, and name as keys
     const scores = teamData.members
       .map((m) => {
-        // Find this member's entry in recruiterTotals by any of their known IDs
         const entry =
           (m.phone && recruiterTotals[m.phone]) ||
           (m.lid   && recruiterTotals[m.lid])   ||
@@ -322,8 +317,7 @@ async function sendSummary() {
 
     if (scores.length === 0) continue;
 
-    const fullRecruiterLength = scores.map(r => r.bijspring).filter(b => !b).length; // Alleen de niet-bijspring recruiters tellen mee voor de gemiddelde score
-
+    const fullRecruiterLength = scores.filter(r => !r.bijspring).length;
     const teamTotal = scores.reduce((sum, r) => r.bijspring ? sum : sum + r.score, 0);
     const teamAvg = Math.round(teamTotal / fullRecruiterLength);
     const teamGrandTotal = scores.reduce((sum, r) => sum + r.score, 0);
@@ -341,20 +335,16 @@ async function sendSummary() {
     lines.push("");
 
     if ((scores.length - fullRecruiterLength) > 0) {
-      // Bijspring recruiters
       lines.push("Bijspring:");
       scores.filter(r => r.bijspring).forEach(({ name, score }) => {
         lines.push(`🔹 ${name} - ${score}`);
       });
-
-      // Total
       lines.push("");
       lines.push(`Total planned: ${teamGrandTotal}`);
       lines.push("");
     }
   }
 
-  // Add anyone not assigned to a team at the bottom
   const unassigned = Object.values(recruiterTotals)
     .filter((r) => r.team === null)
     .sort((a, b) => b.score - a.score);
@@ -371,7 +361,7 @@ async function sendSummary() {
   }
 
   if (grandTotal === oldGrandTotal) {
-    console.log('No new updates since last summary, skipping message send.');
+    console.log('No new updates since last summary, skipping.');
     return;
   } else {
     oldGrandTotal = grandTotal;
@@ -387,48 +377,28 @@ async function sendSummary() {
   console.log("📤 Summary sent!\n" + message);
 }
 
-// Schedule the summary
-cron.schedule(
-  SCHEDULE,
-  () => {
-    const randomDelay = Math.floor(Math.random() * 60000);
-    setTimeout(() => {
-      console.log("⏰ Scheduled summary triggered...");
-      sendSummary();
-    }, randomDelay);
-  },
-  { timezone: TIMEZONE }
-);
+cron.schedule(SCHEDULE, () => {
+  const randomDelay = Math.floor(Math.random() * 60000);
+  setTimeout(() => {
+    console.log("⏰ Scheduled summary triggered...");
+    sendSummary();
+  }, randomDelay);
+}, { timezone: TIMEZONE });
 
-// Reset all totals at midnight every day
-cron.schedule(
-  "0 0 * * *",
-  () => {
-    Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]);
-    console.log("🔄 Midnight reset — all totals cleared for the new day.");
-  },
-  { timezone: TIMEZONE }
-);
+cron.schedule("0 0 * * *", () => {
+  Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]);
+  // Clear persisted file at midnight
+  try { fs.writeFileSync(TOTALS_FILE, JSON.stringify({ _date: new Date().toDateString() }, null, 2)); } catch (_) {}
+  console.log("🔄 Midnight reset — all totals cleared for the new day.");
+}, { timezone: TIMEZONE });
 
-// Terminal commands while the bot is running:
-//   send   → triggers the summary immediately
-//   reset  → clears all recorded totals
-//   status → prints current totals to the console
 process.stdin.resume();
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (input) => {
   const cmd = input.trim().toLowerCase();
-  if (cmd === "send") {
-    console.log("🖐 Manual summary triggered...");
-    sendSummary();
-  }
-  if (cmd === "reset") {
-    Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]);
-    console.log("🔄 Totals reset.");
-  }
-  if (cmd === "status") {
-    console.log("📋 Current totals:", recruiterTotals);
-  }
+  if (cmd === "send") { console.log("🖐 Manual summary triggered..."); sendSummary(); }
+  if (cmd === "reset") { Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]); saveTotals(); console.log("🔄 Totals reset."); }
+  if (cmd === "status") { console.log("📋 Current totals:", recruiterTotals); }
 });
 
 client.initialize();
