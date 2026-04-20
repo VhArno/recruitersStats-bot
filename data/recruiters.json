@@ -66,16 +66,16 @@
           "bijspring": false
         },
         {
-          "phone": "31628443252",
-          "name": "Jenusha",
-          "lid": null,
-          "displayName": "Esha",
-          "bijspring": false
-        },
-        {
           "phone": "31648198020",
           "name": "Samir",
           "displayName": "Samir",
+          "lid": null,
+          "bijspring": false
+        },
+        {
+          "phone": "31627460185",
+          "name": "Willem",
+          "displayName": "Wk",
           "lid": null,
           "bijspring": false
         }
@@ -88,6 +88,13 @@
           "name": "Gijs",
           "lid": null,
           "displayName": ".",
+          "bijspring": false
+        },
+        {
+          "phone": "31628443252",
+          "name": "Jenusha",
+          "lid": null,
+          "displayName": "Esha",
           "bijspring": false
         },
         {
