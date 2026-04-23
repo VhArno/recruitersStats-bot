@@ -328,15 +328,15 @@ async function sendSummary() {
           recruiterTotals[Object.keys(recruiterTotals).find(
             (k) => recruiterTotals[k].name.toLowerCase() === m.name.toLowerCase()
           )];
-        return entry ? { name: entry.name, score: entry.score, bijspring: m.bijspring } : null;
+        return entry ? { name: entry.name, score: entry.score, support: m.support } : null;
       })
       .filter(Boolean)
       .sort((a, b) => b.score - a.score);
 
     if (scores.length === 0) continue;
 
-    const fullRecruiterLength = scores.filter(r => !r.bijspring).length;
-    const teamTotal = scores.reduce((sum, r) => r.bijspring ? sum : sum + r.score, 0);
+    const fullRecruiterLength = scores.filter(r => !r.support).length;
+    const teamTotal = scores.reduce((sum, r) => r.support ? sum : sum + r.score, 0);
     const teamAvg = Math.round(teamTotal / fullRecruiterLength);
     const teamGrandTotal = scores.reduce((sum, r) => sum + r.score, 0);
 
@@ -344,7 +344,7 @@ async function sendSummary() {
     grandCount += fullRecruiterLength;
 
     lines.push(`*${teamName}*`);
-    scores.filter(r => !r.bijspring).forEach(({ name, score }, i) => {
+    scores.filter(r => !r.support).forEach(({ name, score }, i) => {
       const medal = MEDALS[i] || `${i + 1}.`;
       lines.push(`${medal} ${name} - ${score}`);
     });
@@ -353,8 +353,8 @@ async function sendSummary() {
     lines.push("");
 
     if ((scores.length - fullRecruiterLength) > 0) {
-      lines.push("Bijspring:");
-      scores.filter(r => r.bijspring).forEach(({ name, score }) => {
+      lines.push("Support:");
+      scores.filter(r => r.support).forEach(({ name, score }) => {
         lines.push(`🔹 ${name} - ${score}`);
       });
       lines.push("");
