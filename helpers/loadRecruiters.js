@@ -30,7 +30,7 @@ async function loadRecruiters() {
         const sheets = google.sheets({ version: 'v4', auth });
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SHEET_ID,
-            range: `${SHEET_NAME}!A:F`, // Columns: phone, name, displayName, lid, team, bijspring
+            range: `${SHEET_NAME}!A:F`, // Columns: phone, name, displayName, lid, team, support
         });
 
         const rows = response.data.values;
@@ -39,7 +39,7 @@ async function loadRecruiters() {
             return cache ?? { teams: {}, lookup: {}, lidLookup: {}, nameLookup: {}, displayLookup: {} };
         }
 
-        // First row is headers: phone | name | displayName | lid | team | bijspring
+        // First row is headers: phone | name | displayName | lid | team | support
         const [headers, ...dataRows] = rows;
 
         const teams = {};
@@ -54,11 +54,11 @@ async function loadRecruiters() {
             const displayName = row[2]?.trim() || null;
             const lid         = row[3]?.trim() || null;
             const team        = row[4]?.trim() || null;
-            const bijspring   = row[5]?.trim().toLowerCase() === 'true';
+            const support     = row[5]?.trim().toLowerCase() === 'true';
 
             if (!name) continue; // Skip empty rows
 
-            const entry = { name, team, bijspring };
+            const entry = { name, team, support };
 
             // Build lookup maps
             if (phone)       lookup[phone]                            = entry;
@@ -69,7 +69,7 @@ async function loadRecruiters() {
             // Build teams structure (same as recruiters.json format)
             if (team) {
                 if (!teams[team]) teams[team] = { members: [] };
-                teams[team].members.push({ phone, name, displayName, lid, bijspring });
+                teams[team].members.push({ phone, name, displayName, lid, support });
             }
         }
 
