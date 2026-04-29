@@ -4,11 +4,13 @@ const cron = require("node-cron");
 const fs = require("fs");
 const path = require("path");
 
+const { loadRecruiters, invalidateRecruiterCache } = require('./helpers/loadRecruiters');
+
 // ─────────────────────────────────────────────
 // CONFIGURATION — edit these values
 // ─────────────────────────────────────────────
 
-const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆";
+const GROUP_NAME = "recruitment-testgroup"; //🏆RM EU 275/1500 WEEKGOAL🏆
 const SCHEDULE = "*/30 10-21 * * *";
 const TIMEZONE = "Europe/Amsterdam";
 const DAILY_TARGET = 250;
@@ -55,53 +57,6 @@ function saveTotals() {
 
 const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 
-function loadRecruiters() {
-  const filePath = path.join(__dirname, "data/recruiters.json");
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    const data = JSON.parse(raw);
-
-    const lookup = {};
-    const lidLookup = {};
-    const nameLookup = {};
-    const displayLookup = {};
-
-    for (const [teamName, teamData] of Object.entries(data.teams)) {
-      for (const member of teamData.members) {
-        const entry = { name: member.name, team: teamName };
-        if (member.phone)       lookup[member.phone]                            = entry;
-        if (member.lid)         lidLookup[member.lid]                           = entry;
-        if (member.name)        nameLookup[member.name.toLowerCase()]           = entry;
-        if (member.displayName) displayLookup[member.displayName.toLowerCase()] = entry;
-      }
-    }
-    return { teams: data.teams, lookup, lidLookup, nameLookup, displayLookup };
-  } catch (err) {
-    console.error("❌ Could not load recruiters.json:", err.message);
-    return { teams: {}, lookup: {}, lidLookup: {}, nameLookup: {}, displayLookup: {} };
-  }
-}
-
-function saveLidToJson(lid, name) {
-  const filePath = path.join(__dirname, "data/recruiters.json");
-  try {
-    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    for (const teamData of Object.values(data.teams)) {
-      const member = teamData.members.find(
-        (m) => m.name.toLowerCase() === name.toLowerCase()
-      );
-      if (member && !member.lid) {
-        member.lid = lid;
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
-        console.log(`💾 Saved LID ${lid} for ${name} in recruiters.json`);
-        return;
-      }
-    }
-  } catch (err) {
-    console.error("❌ Could not save LID to recruiters.json:", err.message);
-  }
-}
-
 // Load persisted totals on startup
 const recruiterTotals = loadTotals();
 
@@ -111,7 +66,7 @@ const client = new Client({
     dataPath: "./sessions-recruitment"
   }),
   puppeteer: {
-    executablePath: '/usr/bin/chromium-browser',
+    // executablePath: '/usr/bin/chromium-browser',
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   },
 });
@@ -122,92 +77,11 @@ client.on("qr", (qr) => {
 });
 
 client.on("ready", async () => {
-  const { lookup } = loadRecruiters();
+  const { lookup } = await loadRecruiters();
   console.log("✅ Bot is ready and listening!");
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
-  console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters from recruiters.json`);
+  console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters`);
   console.log(`📊 Restored ${Object.keys(recruiterTotals).length} scores from previous session.`);
-
-  // Still attempt startup scan to catch any messages missed while bot was offline
-  // but don't crash if it fails — persisted scores are already loaded
-  console.log("🔍 Attempting startup scan for any missed messages...");
-  try {
-    const chats = await client.getChats();
-    const group = chats.find((c) => c.name === GROUP_NAME);
-    if (!group) {
-      console.warn("⚠️ Group not found, skipping startup scan.");
-      return;
-    }
-
-    let messages = [];
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        messages = await group.fetchMessages({ limit: 100 });
-        break;
-      } catch (fetchErr) {
-        console.warn(`⚠️ fetchMessages attempt ${attempt} failed: ${fetchErr.message}`);
-        if (attempt < 3) await new Promise(res => setTimeout(res, 5000));
-      }
-    }
-
-    if (!messages.length) {
-      console.warn("⚠️ Startup scan skipped — persisted scores are still loaded.");
-      return;
-    }
-
-    const todayStart = new Date();
-    let caught = 0;
-
-    for (const msg of messages) {
-      try {
-        const msgDate = new Date(msg.timestamp * 1000);
-        if (msgDate.getDate() !== todayStart.getDate()) continue;
-
-        const text = msg.body.trim().toLowerCase();
-        const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
-        if (!match) continue;
-
-        const mentionedName = match[1]?.trim();
-        const total = parseInt(match[3]);
-        let targetRecruiter = null;
-        let targetId = null;
-
-        const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
-
-        if (mentionedName) {
-          targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
-          targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
-        } else {
-          const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
-          if (!rawId) continue;
-          targetRecruiter = lookup[rawId] || lidLookup[rawId];
-          if (!targetRecruiter) {
-            const contact = await msg.getContact();
-            if (contact && (contact.pushname || contact.name)) {
-              const displayName = (contact.pushname || contact.name).toLowerCase();
-              targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
-            }
-          }
-          targetId = rawId;
-        }
-
-        if (targetRecruiter && targetId) {
-          const prevScore = recruiterTotals[targetId]?.score ?? 0;
-          const newScore = Math.max(prevScore, total);
-          recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
-          caught++;
-        }
-      } catch (innerErr) {
-        console.error("⚠️ Skipping message due to error:", innerErr.message);
-      }
-    }
-
-    saveTotals();
-    console.log(`✅ Startup scan complete — caught ${caught} missed message(s).`);
-  } catch (err) {
-    console.error("❌ Startup scan failed:", err.message);
-    console.log("📊 Running on persisted scores from disk.");
-  }
 });
 
 client.on("message", async (msg) => {
@@ -229,7 +103,7 @@ client.on("message", async (msg) => {
     let targetId = null;
     let isThirdParty = false;
 
-    const { lookup, lidLookup, nameLookup, displayLookup } = loadRecruiters();
+    const { lookup, lidLookup, nameLookup, displayLookup } = await loadRecruiters();
 
     if (mentionedName) {
       targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
@@ -275,6 +149,7 @@ client.on("message", async (msg) => {
 
       if (!isThirdParty && targetId.length > 15 && !lookup[targetId] && !lidLookup[targetId]) {
         saveLidToJson(targetId, targetRecruiter.name);
+        invalidateRecruiterCache();
       }
 
       // Save to disk on every score update
@@ -310,7 +185,7 @@ async function sendSummary() {
     return;
   }
 
-  const { teams } = loadRecruiters();
+  const { teams } = await loadRecruiters();
 
   let lines = [];
   lines.push("👑 *RECRUITER SCORE MESSAGE* 👑");
