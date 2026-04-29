@@ -10,7 +10,7 @@ const { loadRecruiters, invalidateRecruiterCache } = require('./helpers/loadRecr
 // CONFIGURATION — edit these values
 // ─────────────────────────────────────────────
 
-const GROUP_NAME = "recruitment-testgroup"; //🏆RM EU 275/1500 WEEKGOAL🏆
+const GROUP_NAME = "🏆RM EU 275/1500 WEEKGOAL🏆";
 const SCHEDULE = "*/30 10-21 * * *";
 const TIMEZONE = "Europe/Amsterdam";
 const DAILY_TARGET = 250;
@@ -66,7 +66,7 @@ const client = new Client({
     dataPath: "./sessions-recruitment"
   }),
   puppeteer: {
-    // executablePath: '/usr/bin/chromium-browser',
+    executablePath: '/usr/bin/chromium-browser',
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   },
 });
