@@ -84,6 +84,65 @@ client.on("ready", async () => {
   console.log(`📊 Restored ${Object.keys(recruiterTotals).length} scores from previous session.`);
 });
 
+// ─────────────────────────────────────────────
+// CONNECTION HEALTH
+// ─────────────────────────────────────────────
+//
+// WhatsApp Web reloads its own tab whenever it ships an update. That reload wipes
+// the helpers whatsapp-web.js injects into the page (window.Store / window.WWebJS),
+// and every call afterwards dies with "Cannot read properties of undefined
+// (reading 'getChats')". whatsapp-web.js does try to re-inject on navigation, but it
+// does so in an event handler without a catch, so a failure there passes silently and
+// the page stays broken until the process is restarted.
+
+let recovering = false;
+
+async function ensureInjected() {
+  const page = client.pupPage;
+  if (!page || page.isClosed()) throw new Error("Puppeteer-pagina bestaat niet meer");
+
+  const injected = await page.evaluate(
+    () => typeof window.Store !== "undefined" && typeof window.WWebJS !== "undefined"
+  );
+  if (injected) return;
+
+  console.warn("⚠️ WhatsApp Web-pagina is herladen, injectie opnieuw uitvoeren...");
+  await client.inject();
+  console.log("✅ Injectie hersteld.");
+}
+
+// Last resort when re-injecting fails: rebuild the client from the saved session.
+// If that fails too, exit so the process manager (pm2) restarts us with a clean browser.
+async function recoverClient(reason) {
+  if (recovering) return;
+  recovering = true;
+  console.error(`🔁 Sessie herstellen na: ${reason}`);
+  try {
+    await client.destroy();
+    await client.initialize();
+    console.log("✅ Sessie opnieuw opgestart.");
+  } catch (err) {
+    console.error("❌ Herstarten mislukt, proces stopt zodat pm2 opnieuw start:", err.message || err);
+    process.exit(1);
+  } finally {
+    recovering = false;
+  }
+}
+
+client.on("disconnected", (reason) => {
+  console.error(`🔌 Verbinding verbroken: ${reason}`);
+  // whatsapp-web.js calls destroy() itself here, so only a full restart helps.
+  process.exit(1);
+});
+
+client.on("auth_failure", (msg) => {
+  console.error(`🔑 Authenticatie mislukt: ${msg} — QR opnieuw scannen is nodig.`);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("⚠️ Onafgehandelde fout:", err?.message || err);
+});
+
 client.on("message", async (msg) => {
   if (!msg.from.endsWith("@g.us")) return;
 
@@ -172,6 +231,16 @@ client.on("message", async (msg) => {
 let oldGrandTotal = 0;
 
 async function sendSummary() {
+  try {
+    await ensureInjected();
+    await buildAndSendSummary();
+  } catch (err) {
+    console.error("❌ Samenvatting versturen mislukt:", err?.message || err);
+    await recoverClient("fout bij versturen samenvatting");
+  }
+}
+
+async function buildAndSendSummary() {
   const chats = await client.getChats();
   const group = chats.find((c) => c.name === GROUP_NAME);
 
@@ -256,8 +325,6 @@ async function sendSummary() {
   if (grandTotal === oldGrandTotal) {
     console.log('No new updates since last summary, skipping.');
     return;
-  } else {
-    oldGrandTotal = grandTotal;
   }
 
   const grandAvg = grandCount > 0 ? Math.round(grandTotal / grandCount) : 0;
@@ -267,6 +334,9 @@ async function sendSummary() {
 
   const message = lines.join("\n");
   await group.sendMessage(message);
+  // Only mark as reported once the message actually went out, otherwise a failed
+  // send would make the next run think there is nothing new to report.
+  oldGrandTotal = grandTotal;
   console.log("📤 Summary sent!\n" + message);
 }
 
