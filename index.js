@@ -103,10 +103,10 @@ const client = new Client({
     dataPath: "./sessions-recruitment"
   }),
   puppeteer: {
-    // Leave CHROME_PATH unset to use the Chrome that puppeteer downloads on `npm install`.
-    // Avoid the Ubuntu snap Chromium (/usr/bin/chromium-browser): it disappears or gets
-    // killed whenever snap refreshes or removes it.
-    executablePath: process.env.CHROME_PATH || undefined,
+    // The Chrome puppeteer downloads has no Linux ARM build, so the ARM server needs the
+    // system Chromium from snap. Hold its refreshes (`snap refresh --hold=forever chromium`):
+    // a snap refresh kills the running browser. Set CHROME_PATH to use another browser.
+    executablePath: process.env.CHROME_PATH || (process.arch === "arm64" ? "/snap/bin/chromium" : undefined),
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   },
 });
