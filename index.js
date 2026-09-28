@@ -339,11 +339,19 @@ client.on("message", async (msg) => {
 // Re-reads today's group messages so scores posted while the page was broken, or while
 // the bot was restarting, still count.
 async function catchUpMessages(group) {
-  const messages = await withTimeout(
-    group.fetchMessages({ limit: CATCH_UP_LIMIT }),
-    PAGE_TIMEOUT,
-    "Berichten ophalen"
-  );
+  let messages;
+  try {
+    messages = await withTimeout(
+      group.fetchMessages({ limit: CATCH_UP_LIMIT }),
+      PAGE_TIMEOUT,
+      "Berichten ophalen"
+    );
+  } catch (err) {
+    // Loading older history goes through WhatsApp internals that change often. Without a
+    // limit we only get what the page already holds, which is usually most of today.
+    console.warn("⚠️ Oudere berichten laden mislukt, alleen geladen berichten gebruiken:", err?.message || err);
+    messages = await withTimeout(group.fetchMessages({}), PAGE_TIMEOUT, "Berichten ophalen");
+  }
   const today = dayKey();
   let updated = 0;
 
