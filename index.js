@@ -4,7 +4,7 @@ const cron = require("node-cron");
 const fs = require("fs");
 const path = require("path");
 
-const { loadRecruiters, invalidateRecruiterCache } = require('./helpers/loadRecruiters');
+const { loadRecruiters } = require('./helpers/loadRecruiters');
 
 // ─────────────────────────────────────────────
 // CONFIGURATION — edit these values
@@ -15,24 +15,50 @@ const SCHEDULE = "*/30 10-21 * * *";
 const TIMEZONE = "Europe/Amsterdam";
 const DAILY_TARGET = 250;
 
+// How many recent group messages to re-read before each summary, to pick up scores
+// that were posted while the bot was not listening.
+const CATCH_UP_LIMIT = 300;
+
+const HEALTH_CHECK_INTERVAL = 2 * 60 * 1000;
+const HEALTH_MAX_FAILURES = 3;             // ~6 minutes broken before we restart
+const PAGE_TIMEOUT = 60 * 1000;            // a single call into the WhatsApp Web page
+const REINJECT_GRACE = 3 * 60 * 1000;      // time whatsapp-web.js gets to re-inject after a reload
+const SUMMARY_TIMEOUT = 5 * 60 * 1000;
+
+const SCORE_PATTERN = /^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/;
+
 // ─────────────────────────────────────────────
 // PERSISTENCE
 // ─────────────────────────────────────────────
 
 const TOTALS_FILE = path.join(__dirname, "data/recruiterTotals.json");
 
+// Bookkeeping saved next to the scores, under "_"-prefixed keys so it survives a restart.
+const state = {
+  since: 0,              // messages before this timestamp (ms) are ignored — set by the "reset" command
+  lastSentTotal: 0,      // grand total of the last summary that went out
+  pendingSummary: false, // a summary failed and should be sent as soon as we are back up
+};
+
+function dayKey(date = new Date()) {
+  return date.toLocaleDateString("en-CA", { timeZone: TIMEZONE });
+}
+
 function loadTotals() {
   try {
     if (!fs.existsSync(TOTALS_FILE)) return {};
     const data = JSON.parse(fs.readFileSync(TOTALS_FILE, "utf8"));
     // Only restore if saved today
-    const savedDate = data._date;
-    const today = new Date().toDateString();
-    if (savedDate !== today) {
+    if (data._date !== dayKey()) {
       console.log("📅 Saved totals are from a previous day, starting fresh.");
       return {};
     }
-    delete data._date;
+    state.since = data._since ?? 0;
+    state.lastSentTotal = data._lastSentTotal ?? 0;
+    state.pendingSummary = data._pendingSummary ?? false;
+    for (const key of Object.keys(data)) {
+      if (key.startsWith("_")) delete data[key];
+    }
     console.log(`💾 Restored ${Object.keys(data).length} scores from disk.`);
     return data;
   } catch (err) {
@@ -43,12 +69,23 @@ function loadTotals() {
 
 function saveTotals() {
   try {
-    const data = { ...recruiterTotals, _date: new Date().toDateString() };
+    const data = {
+      ...recruiterTotals,
+      _date: dayKey(),
+      _since: state.since,
+      _lastSentTotal: state.lastSentTotal,
+      _pendingSummary: state.pendingSummary,
+    };
     fs.mkdirSync(path.dirname(TOTALS_FILE), { recursive: true });
     fs.writeFileSync(TOTALS_FILE, JSON.stringify(data, null, 2), "utf8");
   } catch (err) {
     console.error("❌ Could not save recruiterTotals.json:", err.message);
   }
+}
+
+function clearTotals() {
+  Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]);
+  state.lastSentTotal = 0;
 }
 
 // ─────────────────────────────────────────────
@@ -76,12 +113,27 @@ client.on("qr", (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
+// Also fires again every time whatsapp-web.js re-injects after WhatsApp Web reloaded itself.
 client.on("ready", async () => {
   const { lookup } = await loadRecruiters();
   console.log("✅ Bot is ready and listening!");
   console.log(`📅 Summary scheduled: ${SCHEDULE} (${TIMEZONE})`);
   console.log(`👥 Loaded ${Object.keys(lookup).length} recruiters`);
   console.log(`📊 Restored ${Object.keys(recruiterTotals).length} scores from previous session.`);
+
+  startHealthCheck();
+
+  try {
+    const group = await findGroup();
+    if (group) await catchUpMessages(group);
+  } catch (err) {
+    console.error("❌ Inhaalslag na opstarten mislukt:", err?.message || err);
+  }
+
+  if (state.pendingSummary) {
+    console.log("📨 Vorige samenvatting was mislukt, nu alsnog versturen...");
+    sendSummary();
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -89,44 +141,83 @@ client.on("ready", async () => {
 // ─────────────────────────────────────────────
 //
 // WhatsApp Web reloads its own tab whenever it ships an update. That reload wipes
-// the helpers whatsapp-web.js injects into the page (window.Store / window.WWebJS),
-// and every call afterwards dies with "Cannot read properties of undefined
-// (reading 'getChats')". whatsapp-web.js does try to re-inject on navigation, but it
-// does so in an event handler without a catch, so a failure there passes silently and
-// the page stays broken until the process is restarted.
+// the helpers whatsapp-web.js injects into the page (window.Store / window.WWebJS):
+// from then on no "message" events arrive and every call dies with "Cannot read
+// properties of undefined (reading 'getChats')". whatsapp-web.js re-injects by itself
+// once the reloaded page has synced, but when that fails the page stays broken until
+// the process restarts. Calling client.inject() ourselves does not help: it only
+// registers a listener and returns before anything is injected.
+//
+// So: give the library time to recover, and if it doesn't, exit and let pm2 start us
+// with a fresh browser. Scores are on disk and the catch-up re-reads missed messages.
 
-let recovering = false;
+let healthTimer = null;
+let failedChecks = 0;
+let restarting = false;
 
-async function ensureInjected() {
-  const page = client.pupPage;
-  if (!page || page.isClosed()) throw new Error("Puppeteer-pagina bestaat niet meer");
-
-  const injected = await page.evaluate(
-    () => typeof window.Store !== "undefined" && typeof window.WWebJS !== "undefined"
-  );
-  if (injected) return;
-
-  console.warn("⚠️ WhatsApp Web-pagina is herladen, injectie opnieuw uitvoeren...");
-  await client.inject();
-  console.log("✅ Injectie hersteld.");
+function withTimeout(promise, ms, what) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} reageert niet binnen ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-// Last resort when re-injecting fails: rebuild the client from the saved session.
-// If that fails too, exit so the process manager (pm2) restarts us with a clean browser.
-async function recoverClient(reason) {
-  if (recovering) return;
-  recovering = true;
-  console.error(`🔁 Sessie herstellen na: ${reason}`);
-  try {
-    await client.destroy();
-    await client.initialize();
-    console.log("✅ Sessie opnieuw opgestart.");
-  } catch (err) {
-    console.error("❌ Herstarten mislukt, proces stopt zodat pm2 opnieuw start:", err.message || err);
-    process.exit(1);
-  } finally {
-    recovering = false;
+async function isInjected() {
+  const page = client.pupPage;
+  if (!page || page.isClosed()) return false;
+  return withTimeout(
+    page.evaluate(() => typeof window.Store !== "undefined" && typeof window.WWebJS !== "undefined"),
+    PAGE_TIMEOUT,
+    "WhatsApp Web-pagina"
+  );
+}
+
+async function waitUntilInjected() {
+  if (await isInjected()) return;
+  console.warn("⚠️ WhatsApp Web-pagina is herladen, wachten tot whatsapp-web.js opnieuw injecteert...");
+  const deadline = Date.now() + REINJECT_GRACE;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000));
+    if (await isInjected()) {
+      console.log("✅ Injectie hersteld.");
+      return;
+    }
   }
+  throw new Error("WhatsApp Web-helpers nog steeds niet beschikbaar na herladen");
+}
+
+async function restart(reason) {
+  if (restarting) return;
+  restarting = true;
+  console.error(`🔁 Proces herstarten (pm2) na: ${reason}`);
+  saveTotals();
+  try {
+    await withTimeout(client.destroy(), 15000, "Browser afsluiten");
+  } catch (err) {
+    console.error("⚠️ Browser netjes afsluiten mislukt:", err?.message || err);
+  }
+  process.exit(1);
+}
+
+function startHealthCheck() {
+  if (healthTimer) return;
+  healthTimer = setInterval(async () => {
+    let healthy = false;
+    try {
+      healthy = await isInjected();
+    } catch (err) {
+      console.error("⚠️ Health check fout:", err?.message || err);
+    }
+    if (healthy) {
+      if (failedChecks > 0) console.log("✅ WhatsApp Web is weer bruikbaar.");
+      failedChecks = 0;
+      return;
+    }
+    failedChecks++;
+    console.warn(`⚠️ WhatsApp Web niet bruikbaar (${failedChecks}/${HEALTH_MAX_FAILURES})`);
+    if (failedChecks >= HEALTH_MAX_FAILURES) restart("WhatsApp Web bleef onbruikbaar");
+  }, HEALTH_CHECK_INTERVAL);
 }
 
 client.on("disconnected", (reason) => {
@@ -143,110 +234,172 @@ process.on("unhandledRejection", (err) => {
   console.error("⚠️ Onafgehandelde fout:", err?.message || err);
 });
 
+// ─────────────────────────────────────────────
+// SCORE MESSAGES
+// ─────────────────────────────────────────────
+
+const contactNames = new Map();
+const reportedLids = new Set();
+
+async function getDisplayName(msg, rawId) {
+  if (!contactNames.has(rawId)) {
+    const contact = await msg.getContact();
+    contactNames.set(rawId, contact.pushname || contact.name || rawId);
+  }
+  return contactNames.get(rawId);
+}
+
+// Applies one group message to the totals. Scores only ever go up (the message carries
+// the day total), so handling the same message twice is harmless — the catch-up relies
+// on that. Returns true when a score changed.
+async function processScoreMessage(msg, { live }) {
+  const text = (msg.body || "").trim().toLowerCase();
+  const match = text.match(SCORE_PATTERN);
+  if (!match) {
+    if (live && /\d+\s*\/\s*\d+/.test(text)) {
+      console.warn(`⚠️ Score-bericht niet herkend (formaat): "${msg.body}"`);
+    }
+    return false;
+  }
+
+  const mentionedName = match[1]?.trim();
+  const added = parseInt(match[2]);
+  const total = parseInt(match[3]);
+
+  const { lookup, lidLookup, nameLookup, displayLookup } = await loadRecruiters();
+  const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+
+  let recruiter;
+  let known = true;
+
+  if (mentionedName) {
+    recruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
+    if (!recruiter) {
+      if (live) console.warn(`⚠️ Naam "${mentionedName}" staat niet in de sheet, score genegeerd: "${msg.body}"`);
+      return false;
+    }
+  } else {
+    if (!rawId) return false;
+    recruiter = lookup[rawId] || lidLookup[rawId];
+    if (!recruiter) {
+      const displayName = await getDisplayName(msg, rawId);
+      recruiter = nameLookup[displayName.toLowerCase()] || displayLookup[displayName.toLowerCase()];
+      if (recruiter && rawId.length > 15 && !reportedLids.has(rawId)) {
+        reportedLids.add(rawId);
+        console.log(`💡 ${recruiter.name} stuurt vanaf LID ${rawId} — zet dit in de LID-kolom van de sheet.`);
+      }
+      if (!recruiter) {
+        recruiter = { name: displayName, team: null };
+        known = false;
+      }
+    }
+  }
+
+  // Known recruiters are keyed by name, so a score posted by someone else ("naam: +1/5")
+  // and one they post themselves land on the same entry.
+  const key = known ? recruiter.name.toLowerCase() : rawId;
+  const prevScore = recruiterTotals[key]?.score ?? 0;
+  let newScore = Math.max(prevScore, total);
+
+  // Fold in entries for the same person stored under another key (phone, LID, older versions)
+  for (const [otherKey, val] of Object.entries(recruiterTotals)) {
+    if (otherKey !== key && val.name.toLowerCase() === recruiter.name.toLowerCase()) {
+      newScore = Math.max(newScore, val.score);
+      delete recruiterTotals[otherKey];
+      console.log(`🔀 Merged duplicate entry for ${recruiter.name} (${otherKey} → ${key})`);
+    }
+  }
+
+  const changed = !recruiterTotals[key] || newScore !== prevScore;
+  recruiterTotals[key] = { name: recruiter.name, team: recruiter.team, score: newScore };
+
+  if (live || changed) {
+    const prefix = !known ? `⚠️ Onbekend: ${rawId}` : mentionedName ? "👤 (Via derde)" : "📌";
+    const source = live ? "" : " (ingehaald)";
+    console.log(`${prefix} ${recruiter.name} [${recruiter.team}] +${added} | totaal nu: ${newScore}${source}`);
+  }
+  return changed;
+}
+
 client.on("message", async (msg) => {
   if (!msg.from.endsWith("@g.us")) return;
 
   try {
     const chat = await msg.getChat();
     if (chat.name !== GROUP_NAME) return;
-
-    const text = msg.body.trim().toLowerCase();
-    const match = text.match(/^(?:([a-z\s]+):\s*)?\+?\s*(\d+)\s*\/\s*(\d+)/);
-    if (!match) return;
-
-    const mentionedName = match[1]?.trim();
-    const added = parseInt(match[2]);
-    const total = parseInt(match[3]);
-
-    let targetRecruiter = null;
-    let targetId = null;
-    let isThirdParty = false;
-
-    const { lookup, lidLookup, nameLookup, displayLookup } = await loadRecruiters();
-
-    if (mentionedName) {
-      targetRecruiter = nameLookup[mentionedName] || displayLookup[mentionedName];
-      targetId = targetRecruiter ? (targetRecruiter.id || mentionedName) : null;
-      isThirdParty = true;
-    } else {
-      const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
-      if (!rawId) return;
-      targetRecruiter = lookup[rawId] || lidLookup[rawId];
-      if (!targetRecruiter) {
-        const contact = await msg.getContact();
-        const displayName = (contact.pushname || contact.name || "").toLowerCase();
-        targetRecruiter = nameLookup[displayName] || displayLookup[displayName];
-      }
-      targetId = rawId;
-    }
-
-    if (targetRecruiter && targetId) {
-      const prevScore = recruiterTotals[targetId]?.score ?? 0;
-      const newScore = Math.max(prevScore, total);
-
-      if (targetRecruiter && targetId) {
-        const prevScore = recruiterTotals[targetId]?.score ?? 0;
-        const newScore = Math.max(prevScore, total);
-
-        // ── Dedup: verwijder eventuele andere entries voor dezelfde persoon ──
-        for (const [key, val] of Object.entries(recruiterTotals)) {
-          if (key !== targetId && val.name.toLowerCase() === targetRecruiter.name.toLowerCase()) {
-            const existingScore = val.score;
-            delete recruiterTotals[key];
-            // Neem de hoogste score mee
-            if (existingScore > newScore) newScore = existingScore;
-            console.log(`🔀 Merged duplicate entry for ${targetRecruiter.name} (${key} → ${targetId})`);
-          }
-        }
-
-        recruiterTotals[targetId] = { name: targetRecruiter.name, team: targetRecruiter.team, score: newScore };
-        saveTotals();
-      }
-
-      const logPrefix = isThirdParty ? `👤 (Via derde) ${targetRecruiter.name}` : `📌 ${targetRecruiter.name}`;
-      console.log(`${logPrefix} [${targetRecruiter.team}] +${added} | totaal nu: ${newScore}`);
-
-      if (!isThirdParty && targetId.length > 15 && !lookup[targetId] && !lidLookup[targetId]) {
-        saveLidToJson(targetId, targetRecruiter.name);
-        invalidateRecruiterCache();
-      }
-
-      // Save to disk on every score update
-      saveTotals();
-
-    } else if (!isThirdParty) {
-      const rawId = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
-      const contact = await msg.getContact();
-      const displayName = contact.pushname || contact.name || rawId;
-      recruiterTotals[rawId] = { name: displayName, team: null, score: total };
-      console.log(`⚠️ Onbekend: ${rawId} (${displayName}) stuurde score ${total}`);
-      saveTotals();
-    }
-
+    if (await processScoreMessage(msg, { live: true })) saveTotals();
   } catch (err) {
     console.error("❌ Fout bij verwerken live bericht:", err.message);
   }
 });
 
-let oldGrandTotal = 0;
+// Re-reads today's group messages so scores posted while the page was broken, or while
+// the bot was restarting, still count.
+async function catchUpMessages(group) {
+  const messages = await withTimeout(
+    group.fetchMessages({ limit: CATCH_UP_LIMIT }),
+    PAGE_TIMEOUT,
+    "Berichten ophalen"
+  );
+  const today = dayKey();
+  let updated = 0;
+
+  for (const msg of messages) {
+    if (msg.fromMe) continue;
+    const sentAt = msg.timestamp * 1000;
+    if (sentAt < state.since || dayKey(new Date(sentAt)) !== today) continue;
+    try {
+      if (await processScoreMessage(msg, { live: false })) updated++;
+    } catch (err) {
+      console.error("❌ Fout bij inhalen bericht:", err.message);
+    }
+  }
+
+  if (updated > 0) {
+    saveTotals();
+    console.log(`🔄 Inhaalslag: ${updated} gemiste score(s) verwerkt.`);
+  }
+}
+
+// ─────────────────────────────────────────────
+// SUMMARY
+// ─────────────────────────────────────────────
+
+async function findGroup() {
+  const chats = await withTimeout(client.getChats(), PAGE_TIMEOUT, "Chats ophalen");
+  const group = chats.find((c) => c.name === GROUP_NAME);
+  if (!group) console.log(`❌ Group "${GROUP_NAME}" not found.`);
+  return group;
+}
+
+let sending = false;
 
 async function sendSummary() {
+  if (sending || restarting) return;
+  sending = true;
   try {
-    await ensureInjected();
-    await buildAndSendSummary();
+    await waitUntilInjected();
+    await withTimeout(buildAndSendSummary(), SUMMARY_TIMEOUT, "Samenvatting");
+    state.pendingSummary = false;
+    saveTotals();
   } catch (err) {
     console.error("❌ Samenvatting versturen mislukt:", err?.message || err);
-    await recoverClient("fout bij versturen samenvatting");
+    state.pendingSummary = true;
+    await restart("fout bij versturen samenvatting");
+  } finally {
+    sending = false;
   }
 }
 
 async function buildAndSendSummary() {
-  const chats = await client.getChats();
-  const group = chats.find((c) => c.name === GROUP_NAME);
+  const group = await findGroup();
+  if (!group) return;
 
-  if (!group) {
-    console.log(`❌ Group "${GROUP_NAME}" not found.`);
-    return;
+  try {
+    await catchUpMessages(group);
+  } catch (err) {
+    // Not fatal: send what we have from the live messages.
+    console.error("⚠️ Inhaalslag mislukt:", err?.message || err);
   }
 
   if (Object.keys(recruiterTotals).length === 0) {
@@ -267,6 +420,7 @@ async function buildAndSendSummary() {
     const scores = teamData.members
       .map((m) => {
         const entry =
+          recruiterTotals[m.name.toLowerCase()] ||
           (m.phone && recruiterTotals[m.phone]) ||
           (m.lid   && recruiterTotals[m.lid])   ||
           recruiterTotals[Object.keys(recruiterTotals).find(
@@ -322,7 +476,7 @@ async function buildAndSendSummary() {
     lines.push("");
   }
 
-  if (grandTotal === oldGrandTotal) {
+  if (grandTotal === state.lastSentTotal) {
     console.log('No new updates since last summary, skipping.');
     return;
   }
@@ -336,7 +490,7 @@ async function buildAndSendSummary() {
   await group.sendMessage(message);
   // Only mark as reported once the message actually went out, otherwise a failed
   // send would make the next run think there is nothing new to report.
-  oldGrandTotal = grandTotal;
+  state.lastSentTotal = grandTotal;
   console.log("📤 Summary sent!\n" + message);
 }
 
@@ -349,9 +503,10 @@ cron.schedule(SCHEDULE, () => {
 }, { timezone: TIMEZONE });
 
 cron.schedule("0 0 * * *", () => {
-  Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]);
-  // Clear persisted file at midnight
-  try { fs.writeFileSync(TOTALS_FILE, JSON.stringify({ _date: new Date().toDateString() }, null, 2)); } catch (_) {}
+  clearTotals();
+  state.since = 0;
+  state.pendingSummary = false;
+  saveTotals();
   console.log("🔄 Midnight reset — all totals cleared for the new day.");
 }, { timezone: TIMEZONE });
 
@@ -360,7 +515,13 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (input) => {
   const cmd = input.trim().toLowerCase();
   if (cmd === "send") { console.log("🖐 Manual summary triggered..."); sendSummary(); }
-  if (cmd === "reset") { Object.keys(recruiterTotals).forEach((k) => delete recruiterTotals[k]); saveTotals(); console.log("🔄 Totals reset."); }
+  if (cmd === "reset") {
+    clearTotals();
+    // Keep the catch-up from reading back messages sent before the reset
+    state.since = Date.now();
+    saveTotals();
+    console.log("🔄 Totals reset.");
+  }
   if (cmd === "status") { console.log("📋 Current totals:", recruiterTotals); }
 });
 
