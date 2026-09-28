@@ -244,6 +244,13 @@ process.on("unhandledRejection", (err) => {
 const contactNames = new Map();
 const reportedLids = new Set();
 
+// Cheap sender description for logs, without an extra round trip to the page.
+function senderLabel(msg) {
+  const id = (msg.author || msg.from || "").replace(/@c\.us|@lid/g, "");
+  const name = msg._data?.notifyName;
+  return name ? `${name} (${id})` : id;
+}
+
 async function getDisplayName(msg, rawId) {
   if (!contactNames.has(rawId)) {
     const contact = await msg.getContact();
@@ -260,7 +267,9 @@ async function processScoreMessage(msg, { live }) {
   const match = text.match(SCORE_PATTERN);
   if (!match) {
     if (live && /\d+\s*\/\s*\d+/.test(text)) {
-      console.warn(`⚠️ Score-bericht niet herkend (formaat): "${msg.body}"`);
+      console.warn(`⚠️ Score-bericht niet herkend (formaat) van ${senderLabel(msg)}: "${msg.body}"`);
+    } else if (live) {
+      console.log(`💬 Geen score in bericht van ${senderLabel(msg)}: "${(msg.body || `<${msg.type}>`).slice(0, 80)}"`);
     }
     return false;
   }
@@ -336,6 +345,20 @@ client.on("message", async (msg) => {
   }
 });
 
+// Group messages arrive encrypted per sender. When the bot's linked device lacks a sender's
+// key, their message stays "ciphertext" and whatsapp-web.js holds back the "message" event
+// until it is decrypted — which may never happen. Log it so those senders are visible.
+client.on("message_ciphertext", async (msg) => {
+  if (!msg.from.endsWith("@g.us")) return;
+  try {
+    const chat = await msg.getChat();
+    if (chat.name !== GROUP_NAME) return;
+    console.warn(`🔒 Versleuteld bericht van ${senderLabel(msg)}, wacht op ontsleuteling...`);
+  } catch (err) {
+    console.error("❌ Fout bij versleuteld bericht:", err.message);
+  }
+});
+
 // Re-reads today's group messages so scores posted while the page was broken, or while
 // the bot was restarting, still count.
 async function catchUpMessages(group) {
@@ -354,11 +377,16 @@ async function catchUpMessages(group) {
   }
   const today = dayKey();
   let updated = 0;
+  const undecrypted = new Set();
 
   for (const msg of messages) {
     if (msg.fromMe) continue;
     const sentAt = msg.timestamp * 1000;
     if (sentAt < state.since || dayKey(new Date(sentAt)) !== today) continue;
+    if (msg.type === "ciphertext") {
+      undecrypted.add(senderLabel(msg));
+      continue;
+    }
     try {
       if (await processScoreMessage(msg, { live: false })) updated++;
     } catch (err) {
@@ -369,6 +397,9 @@ async function catchUpMessages(group) {
   if (updated > 0) {
     saveTotals();
     console.log(`🔄 Inhaalslag: ${updated} gemiste score(s) verwerkt.`);
+  }
+  if (undecrypted.size > 0) {
+    console.warn(`🔒 Berichten van vandaag die de bot niet kan ontsleutelen, van: ${[...undecrypted].join(", ")}`);
   }
 }
 
