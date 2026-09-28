@@ -103,7 +103,10 @@ const client = new Client({
     dataPath: "./sessions-recruitment"
   }),
   puppeteer: {
-    executablePath: '/usr/bin/chromium-browser',
+    // Leave CHROME_PATH unset to use the Chrome that puppeteer downloads on `npm install`.
+    // Avoid the Ubuntu snap Chromium (/usr/bin/chromium-browser): it disappears or gets
+    // killed whenever snap refreshes or removes it.
+    executablePath: process.env.CHROME_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   },
 });
@@ -525,4 +528,11 @@ process.stdin.on("data", (input) => {
   if (cmd === "status") { console.log("📋 Current totals:", recruiterTotals); }
 });
 
-client.initialize();
+// Without this a browser that fails to launch only logs an unhandled rejection, and the
+// process lives on without WhatsApp while the cron jobs keep failing.
+client.initialize().catch(async (err) => {
+  console.error("❌ WhatsApp starten mislukt:", err?.message || err);
+  // Pause so pm2 doesn't restart us in a tight loop while the browser stays broken.
+  await new Promise((r) => setTimeout(r, 30000));
+  process.exit(1);
+});
