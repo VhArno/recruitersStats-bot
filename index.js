@@ -151,12 +151,20 @@ client.on("ready", async () => {
 // the process restarts. Calling client.inject() ourselves does not help: it only
 // registers a listener and returns before anything is injected.
 //
-// So: give the library time to recover, and if it doesn't, exit and let pm2 start us
-// with a fresh browser. Scores are on disk and the catch-up re-reads missed messages.
+// The usual way it fails: the library only re-injects on the page's "change:hasSynced"
+// event, and it subscribes to it late in inject(). After a quick reload the page can
+// finish syncing first, the event is missed and nothing is ever injected. So when the
+// page is synced but still not injected, we fire the library's own handler for that
+// event (window.onAppStateHasSyncedEvent, exposed by puppeteer and kept across reloads).
+//
+// If even that doesn't help, exit and let pm2 start us with a fresh browser. Scores are
+// on disk and the catch-up re-reads missed messages.
 
 let healthTimer = null;
 let failedChecks = 0;
 let restarting = false;
+let brokenSince = 0;   // when we first saw the page without helpers, 0 while healthy
+let nudgedAt = 0;      // last time we fired the sync handler ourselves
 
 function withTimeout(promise, ms, what) {
   let timer;
@@ -169,11 +177,43 @@ function withTimeout(promise, ms, what) {
 async function isInjected() {
   const page = client.pupPage;
   if (!page || page.isClosed()) return false;
-  return withTimeout(
+  const injected = await withTimeout(
     page.evaluate(() => typeof window.Store !== "undefined" && typeof window.WWebJS !== "undefined"),
     PAGE_TIMEOUT,
     "WhatsApp Web-pagina"
   );
+  if (injected) {
+    brokenSince = 0;
+  } else if (!brokenSince) {
+    brokenSince = Date.now();
+  }
+  return injected;
+}
+
+// Fires the library's sync handler when the page has synced but was never re-injected.
+// Waits NUDGE_DELAY first so we don't race the library's own re-injection: running it
+// twice would register the page's event listeners twice.
+const NUDGE_DELAY = 30 * 1000;
+
+async function nudgeInjection() {
+  if (!brokenSince || Date.now() - brokenSince < NUDGE_DELAY || nudgedAt > brokenSince) return;
+  const page = client.pupPage;
+  if (!page || page.isClosed()) return;
+  const fired = await withTimeout(
+    page.evaluate(() => {
+      const socket = window.require?.("WAWebSocketModel")?.Socket;
+      if (!socket?.hasSynced || typeof window.onAppStateHasSyncedEvent !== "function") return false;
+      // Not awaited: it resolves only once the whole injection on the Node side is done.
+      window.onAppStateHasSyncedEvent();
+      return true;
+    }),
+    PAGE_TIMEOUT,
+    "WhatsApp Web-pagina"
+  );
+  if (fired) {
+    nudgedAt = Date.now();
+    console.warn("🩹 Pagina is gesynchroniseerd maar niet geïnjecteerd, injectie zelf gestart.");
+  }
 }
 
 async function waitUntilInjected() {
@@ -185,6 +225,11 @@ async function waitUntilInjected() {
     if (await isInjected()) {
       console.log("✅ Injectie hersteld.");
       return;
+    }
+    try {
+      await nudgeInjection();
+    } catch (err) {
+      console.error("⚠️ Injectie starten mislukt:", err?.message || err);
     }
   }
   throw new Error("WhatsApp Web-helpers nog steeds niet beschikbaar na herladen");
@@ -219,6 +264,11 @@ function startHealthCheck() {
     }
     failedChecks++;
     console.warn(`⚠️ WhatsApp Web niet bruikbaar (${failedChecks}/${HEALTH_MAX_FAILURES})`);
+    try {
+      await nudgeInjection();
+    } catch (err) {
+      console.error("⚠️ Injectie starten mislukt:", err?.message || err);
+    }
     if (failedChecks >= HEALTH_MAX_FAILURES) restart("WhatsApp Web bleef onbruikbaar");
   }, HEALTH_CHECK_INTERVAL);
 }
