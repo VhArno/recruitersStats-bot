@@ -144,18 +144,17 @@ client.on("ready", async () => {
 // ─────────────────────────────────────────────
 //
 // WhatsApp Web reloads its own tab whenever it ships an update. That reload wipes
-// the helpers whatsapp-web.js injects into the page (window.Store / window.WWebJS):
-// from then on no "message" events arrive and every call dies with "Cannot read
-// properties of undefined (reading 'getChats')". whatsapp-web.js re-injects by itself
-// once the reloaded page has synced, but when that fails the page stays broken until
-// the process restarts. Calling client.inject() ourselves does not help: it only
+// the helpers whatsapp-web.js injects into the page (window.WWebJS): from then on no
+// "message" events arrive and every call into the page fails. whatsapp-web.js re-injects
+// by itself once the reloaded page has synced, but when that fails the page stays broken
+// until the process restarts. Calling client.inject() ourselves does not help: it only
 // registers a listener and returns before anything is injected.
 //
-// The usual way it fails: the library only re-injects on the page's "change:hasSynced"
-// event, and it subscribes to it late in inject(). After a quick reload the page can
-// finish syncing first, the event is missed and nothing is ever injected. So when the
-// page is synced but still not injected, we fire the library's own handler for that
-// event (window.onAppStateHasSyncedEvent, exposed by puppeteer and kept across reloads).
+// We run whatsapp-web.js from a pinned main-branch commit: 1.34.6 grabbed ~120 WhatsApp
+// modules up front and a single renamed one broke every injection, and it could miss the
+// page's "synced" event after a quick reload. If injection still doesn't come back, we
+// fire the library's own handler for that event (window.onAppStateHasSyncedEvent, exposed
+// by puppeteer and kept across reloads) and log why it fails.
 //
 // If even that doesn't help, exit and let pm2 start us with a fresh browser. Scores are
 // on disk and the catch-up re-reads missed messages.
@@ -178,7 +177,7 @@ async function isInjected() {
   const page = client.pupPage;
   if (!page || page.isClosed()) return false;
   const injected = await withTimeout(
-    page.evaluate(() => typeof window.Store !== "undefined" && typeof window.WWebJS !== "undefined"),
+    page.evaluate(() => typeof window.WWebJS !== "undefined"),
     PAGE_TIMEOUT,
     "WhatsApp Web-pagina"
   );
@@ -199,21 +198,32 @@ async function nudgeInjection() {
   if (!brokenSince || Date.now() - brokenSince < NUDGE_DELAY || nudgedAt > brokenSince) return;
   const page = client.pupPage;
   if (!page || page.isClosed()) return;
-  const fired = await withTimeout(
-    page.evaluate(() => {
-      const socket = window.require?.("WAWebSocketModel")?.Socket;
-      if (!socket?.hasSynced || typeof window.onAppStateHasSyncedEvent !== "function") return false;
-      // Not awaited: it resolves only once the whole injection on the Node side is done.
-      window.onAppStateHasSyncedEvent();
-      return true;
-    }),
+  const synced = await withTimeout(
+    page.evaluate(() =>
+      !!window.require?.("WAWebSocketModel")?.Socket?.hasSynced &&
+      typeof window.onAppStateHasSyncedEvent === "function"
+    ),
     PAGE_TIMEOUT,
     "WhatsApp Web-pagina"
   );
-  if (fired) {
-    nudgedAt = Date.now();
-    console.warn("🩹 Pagina is gesynchroniseerd maar niet geïnjecteerd, injectie zelf gestart.");
-  }
+  if (!synced) return;
+  nudgedAt = Date.now();
+  console.warn("🩹 Pagina is gesynchroniseerd maar niet geïnjecteerd, injectie zelf gestart.");
+  // Awaited, so an error thrown during the injection on the Node side reaches us instead
+  // of vanishing as an unhandled rejection inside the page.
+  const error = await withTimeout(
+    page.evaluate(async () => {
+      try {
+        await window.onAppStateHasSyncedEvent();
+        return null;
+      } catch (err) {
+        return String(err?.stack || err?.message || err);
+      }
+    }),
+    2 * PAGE_TIMEOUT,
+    "Injectie"
+  );
+  if (error) console.error("❌ Injectie mislukt:", error);
 }
 
 async function waitUntilInjected() {
@@ -278,6 +288,11 @@ client.on("disconnected", (reason) => {
   // whatsapp-web.js calls destroy() itself here, so only a full restart helps.
   process.exit(1);
 });
+
+// Start watching as soon as we're logged in, not only on "ready": when injection fails
+// right after a restart, "ready" never comes and the bot would otherwise sit there deaf
+// until the next scheduled summary.
+client.on("authenticated", () => startHealthCheck());
 
 client.on("auth_failure", (msg) => {
   console.error(`🔑 Authenticatie mislukt: ${msg} — QR opnieuw scannen is nodig.`);

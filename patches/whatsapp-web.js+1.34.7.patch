@@ -1,0 +1,27 @@
+diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+index cc8f47f..60ddede 100644
+--- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
++++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+@@ -933,10 +933,18 @@ exports.LoadUtils = () => {
+ 
+     window.WWebJS.getChats = async () => {
+         const chats = window.require('WAWebCollections').Chat.getModelsArray();
+-        const chatPromises = chats.map((chat) =>
+-            window.WWebJS.getChatModel(chat),
+-        );
+-        return await Promise.all(chatPromises);
++
++        // Process each chat individually so one failure doesn't discard the whole list
++        const results = [];
++        for (const chat of chats) {
++            try {
++                const model = await window.WWebJS.getChatModel(chat);
++                if (model) results.push(model);
++            } catch {
++                // skip chats that fail serialization
++            }
++        }
++        return results;
+     };
+ 
+     window.WWebJS.getChannels = async () => {
